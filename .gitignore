@@ -1,0 +1,7 @@
+gl_client
+gl_server
+jpg_test.jpg
+*.o
+test
+streamer
+.vscode/*

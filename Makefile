@@ -6,18 +6,22 @@ STREAMER_LIBS=-L/usr/lib/ -lzmq `pkg-config --libs gstreamer-1.0` `pkg-config --
 STREAMER_INCLUDES=-I/usr/include/ -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0/ -I/usr/lib/x86_64-linux-gnu/glib-2.0/include/
 
 INCLUDES=-I/usr/include/ 
-OBJS=server.o
+SERVER_OBJS=server.o
+CLIENT_OBJS=client.o
 
 all: gl_server gl_client streamer
 
-server.o: server.cpp server.h 
-	$(CXX) -c -g -o server.o $(CXXFLAGS) $(INCLUDES) server.cpp
+server.o: ./glremote_server/glremote_server.cpp ./glremote_server/glremote_server.h 
+	$(CXX) -c -g -o server.o $(CXXFLAGS) $(INCLUDES) ./glremote_server/glremote_server.cpp
 
 gl_server: main.cpp server.o
-	$(CXX) -g -o gl_server $(CXXFLAGS) $(INCLUDES) main.cpp $(OBJS) $(LIBS)
+	$(CXX) -g -o gl_server $(CXXFLAGS) $(INCLUDES) main.cpp $(SERVER_OBJS) $(LIBS)
 
-gl_client: client.cpp
-	$(CXX) -g -o gl_client $(CXXFLAGS) $(INCLUDES) client.cpp $(LIBS)
+client.o: ./glremote/glremote.cpp ./glremote/glremote/glremote.h ./glremote/gl_commands.h
+	$(CXX) -c -g -o client.o $(CXXFLAGS) $(INCLUDES) ./glremote/glremote.cpp 
+
+gl_client: client.cpp client.o
+	$(CXX) -g -o gl_client $(CXXFLAGS) $(INCLUDES) client.cpp $(CLIENT_OBJS) $(LIBS)
 
 streamer: streamer.cpp
 	$(CXX) -g -o stremaer $(CXXFLAGS) $(STREAMER_INCLUDES) streamer.cpp $(STREAMER_LIBS)
@@ -26,4 +30,4 @@ test: test.cpp
 	$(CXX) -g -o test $(CXXFLAGS) $(INCLUDES) test.cpp $(LIBS)
 
 clean:
-	rm gl_server $(OBJS)
+	rm gl_server gl_client streamer *.o 

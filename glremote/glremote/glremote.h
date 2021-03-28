@@ -1,4 +1,4 @@
-#include "khrplatform.h"
+#include "KHR/khrplatform.h"
 
 
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -34,7 +34,7 @@ GL_APICALL void GL_APIENTRY glVertex3f(float x, float y, float z);
 GL_APICALL void GL_APIENTRY glEnd();
 GL_APICALL void GL_APIENTRY glFlush();
 GL_APICALL unsigned int GL_APIENTRY glCreateShader(unsigned int type);
-GL_APICALL void GL_APIENTRY glShaderSource(int shader, int count, const char *const* string, const int* length);
+GL_APICALL void GL_APIENTRY glShaderSource(int shader, int count, const char *const *string, const int* length);
 GL_APICALL void GL_APIENTRY glCompileShader (int shader);
 GL_APICALL void GL_APIENTRY glGetShaderiv (int shader, unsigned int pname, int* param);
 GL_APICALL unsigned int GL_APIENTRY glCreateProgram();
@@ -52,3 +52,5 @@ GL_APICALL void GL_APIENTRY glEnableVertexAttribArray(unsigned int index);
 GL_APICALL void GL_APIENTRY glUseProgram(unsigned int program);
 GL_APICALL void GL_APIENTRY glClearColor (float red, float green, float blue, float alpha);
 GL_APICALL void GL_APIENTRY glDrawArrays (unsigned int mode, int first, int count);
+GL_APICALL void GL_APIENTRY glSwapBuffer ();
+GL_APICALL void GL_APIENTRY glViewport(int x, int y, int width, int height);

@@ -29,7 +29,16 @@ enum GL_Server_Command{
   GLSC_glUseProgram,
   GLSC_glClearColor,
   GLSC_glDrawArrays,
+  GLSC_glViewport,
 };
+
+typedef struct {
+	unsigned int cmd;
+	int x;
+	int y;
+	int width;
+	int height;
+} gl_glViewport_t;
 
 typedef struct{
   unsigned int cmd;
@@ -74,7 +83,7 @@ typedef struct {
   unsigned int cmd;
   int shader;
   int count;
-  const char** string;
+  const char *const *string;
   const int* length; // usally null
 } gl_glShaderSource_t;
 

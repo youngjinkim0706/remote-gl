@@ -8,7 +8,7 @@
 // #include <GL/glut.h>
 
 
-#include "gl_commands.h"
+#include "../glremote/gl_commands.h"
 
 #define BUFFER_SIZE 1024
 #define WIDTH 1024
@@ -26,13 +26,15 @@ class Server{
         
         std::string ip_address;
         std::string port;
+        bool enableStreaming;
 
         GLFWwindow *window;
         static int framebufferWidth, framebufferHeight;
 
-        Server(char* address, char* p){
+        Server(char* address, char* p, bool flag){
             ip_address = std::string(address);
             port = std::string(p);
+            enableStreaming = flag;
         };
         ~Server(){
             // sock.close();

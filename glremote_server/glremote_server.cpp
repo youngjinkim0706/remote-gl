@@ -1,6 +1,4 @@
-#include "server.h"
-// zmq::context_t Server::ctx;
-// zmq::socket_t Server::sock;
+#include "glremote_server.h"
 
 int Server::framebufferHeight = 0;
 int Server::framebufferWidth = 0;
@@ -16,8 +14,10 @@ void Server::server_bind(){
     std::cout << "tcp://" + ip_address + ":" + port << std::endl;
     sock.bind("tcp://" + ip_address + ":" + port);
 
-    ipc_sock = zmq::socket_t(ipc_ctx, zmq::socket_type::push);
-    ipc_sock.bind("ipc:///tmp/streamer.zmq"); // need to change 
+    if(enableStreaming){
+        ipc_sock = zmq::socket_t(ipc_ctx, zmq::socket_type::push);
+        ipc_sock.bind("ipc:///tmp/streamer.zmq"); // need to change
+    } 
 }
 
 
@@ -73,7 +73,7 @@ void Server::init_gl(){
 	std::cout << "Vendor: " << glGetString(GL_VENDOR) << std::endl;
 	std::cout << "Renderer: " << glGetString(GL_RENDERER) << std::endl;
     
-    glfwSwapInterval(1);
+    // glfwSwapInterval(1);
 }
 
 void Server::run(){
@@ -361,15 +361,26 @@ void Server::run(){
                 }
 
                 glfwSwapBuffers(window);
-
-                unsigned char *pixel_data  = (unsigned char*) malloc(WIDTH * HEIGHT * 4); // GL_RGBA
-                glReadBuffer(GL_FRONT);
-                glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixel_data);
+                glfwPollEvents();
                 
-                zmq::message_t zmq_pixel_data(WIDTH * HEIGHT * 4);     
-                memcpy(zmq_pixel_data.data(), (void *)pixel_data, WIDTH * HEIGHT * 4);
-                ipc_sock.send(zmq_pixel_data, zmq::send_flags::none);
-            
+                // streaming
+                if (enableStreaming){
+                    unsigned char *pixel_data  = (unsigned char*) malloc(WIDTH * HEIGHT * 4); // GL_RGBA
+                    glReadBuffer(GL_FRONT);
+                    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixel_data);
+                    
+                    zmq::message_t zmq_pixel_data(WIDTH * HEIGHT * 4);     
+                    memcpy(zmq_pixel_data.data(), (void *)pixel_data, WIDTH * HEIGHT * 4);
+                    ipc_sock.send(zmq_pixel_data, zmq::send_flags::none);
+                }
+                break;
+            }
+            case GLSC_glViewport:{
+                zmq::message_t data_msg;
+                auto res = sock.recv(data_msg, zmq::recv_flags::none);
+                gl_glViewport_t* cmd_data = (gl_glViewport_t*) data_msg.data();
+                std::cout << cmd_data->width << "\t" << cmd_data->height << std::endl;
+                glViewport(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
                 break;
             }
             case GLSC_BREAK:{

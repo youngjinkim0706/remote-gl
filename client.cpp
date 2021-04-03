@@ -2,7 +2,7 @@
 #include <string>
 #include <iostream>
 // #include <GL/glew.h>
-#include "glremote/glremote/glremote.h"
+#include "glremote/glremote/glremote_client.h"
 #include "glremote/gl_commands.h"
 
 #define GL_SET_COMMAND(PTR, FUNCNAME) gl_##FUNCNAME##_t *PTR = (gl_##FUNCNAME##_t *)malloc(sizeof(gl_##FUNCNAME##_t)); PTR->cmd = GLSC_##FUNCNAME
@@ -39,11 +39,11 @@ float color[] = {
     0.0f, 0.0f, 1.0f  //vertex 3 : BLUE (0,0,1)
 };
 
-// zmq::context_t ctx2;
-// zmq::socket_t sock2(ctx2, zmq::socket_type::req);
-
 int main(int argc, char* argv[]) {  
-    // sock2.connect("tcp://127.0.0.1:12345");
+    zmq::context_t ctx2;
+    zmq::socket_t sock2(ctx2, zmq::socket_type::req);
+
+    sock2.connect("tcp://127.0.0.1:12345");
     // sock2.connect("tcp://" + std::string(argv[1]) + ":" + std::string(argv[2]));
 
     // shader initialization
@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
         glClearColor(0, 0, 0, 1); 
         glClear(GL_COLOR_BUFFER_BIT); 
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        std::cout << sizeof(gl_glClearColor_t) + sizeof(gl_glClear_t) + sizeof(gl_glDrawArrays_t) << std::endl;
+        // std::cout << sizeof(gl_glClearColor_t) + sizeof(gl_glClear_t) + sizeof(gl_glDrawArrays_t) << std::endl;
         glSwapBuffer();
     }
     return 0;

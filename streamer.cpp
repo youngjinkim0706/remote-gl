@@ -20,6 +20,10 @@
 #include <zmq.hpp>
 #include <gst/gst.h>
 #include <iostream>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <string>
+#include <unistd.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
@@ -30,6 +34,7 @@
 
 #define WIDTH 1024
 #define HEIGHT 768
+#define FIFO_NAME "splab_stream"
 
 typedef struct
 {
@@ -40,6 +45,7 @@ typedef struct
 
 zmq::context_t ctx;
 zmq::socket_t sock(ctx, zmq::socket_type::pull);
+int fd;
 
 /* called when we need to give data to appsrc */
 static void
@@ -50,16 +56,26 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
     GstFlowReturn ret;
     GstMapInfo map;
 
-    zmq::message_t msg;
-
-    sock.recv(msg, zmq::recv_flags::none);
-
+    // zmq::message_t msg;
+    // sock.recv(msg, zmq::recv_flags::none);
+   
     size = WIDTH * HEIGHT * 4;
 
+    // unsigned char *pixel_data  = (unsigned char*) malloc(size); // GL_RGBA
+    unsigned char pixel_data[size];
+    // std::cout << size << std::endl;
+
+
+    if (read(fd, pixel_data, size) < 0 ) {
+      printf("fail to call read()\n");
+    }
+    // std::cout << pixel_data << std::endl;
+
     buffer = gst_buffer_new_allocate (NULL, size, NULL);
-    // buffer = gst_buffer_new_and_alloc(msg.size());
     gst_buffer_map (buffer, &map, GST_MAP_WRITE);
-    memcpy (map.data, msg.data(), size);
+    
+    // memcpy (map.data, msg.data(), size);
+    memcpy (map.data, pixel_data, size);
 
     gst_buffer_unmap (buffer, &map);
     
@@ -126,6 +142,11 @@ main (int argc, char *argv[])
         // sock = zmq::socket_t(ctx, zmq::socket_type::pull);
     sock.connect("ipc:///tmp/streamer.zmq");
 
+    if ((fd = open(FIFO_NAME, O_RDONLY)) < 0) {
+        printf("fail to open named pipe\n");
+        return 0;
+    }
+
     gst_init (&argc, &argv);
 
     loop = g_main_loop_new (NULL, FALSE);
@@ -163,5 +184,6 @@ main (int argc, char *argv[])
     g_print ("stream ready at rtsp://172.30.1.6:8554/test\n");
     g_main_loop_run (loop);
 
+    close(fd);
     return 0;
 }

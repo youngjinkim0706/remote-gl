@@ -5,11 +5,10 @@
 #include "glremote_server/glremote_server.h"
 
 int main(int argc, char* argv[]) {
-    std::cout << argc << std::endl;
     bool enableStreaming = false;
     // std::cout << argv[1] << "\t" << argv[2] << std::endl;
     if (argc > 3){
-        std::cout << argv[1] << "\t" << argv[2] << "\t" << argv[3] << std::endl;
+        // std::cout << argv[1] << "\t" << argv[2] << "\t" << argv[3] << std::endl;
 
         if (strcmp(argv[3], "true") == 0){
             enableStreaming = true;

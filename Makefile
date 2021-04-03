@@ -17,7 +17,7 @@ server.o: ./glremote_server/glremote_server.cpp ./glremote_server/glremote_serve
 gl_server: main.cpp server.o
 	$(CXX) -g -o gl_server $(CXXFLAGS) $(INCLUDES) main.cpp $(SERVER_OBJS) $(LIBS)
 
-client.o: ./glremote/glremote.cpp ./glremote/glremote/glremote.h ./glremote/gl_commands.h
+client.o: ./glremote/glremote.cpp ./glremote/glremote/glremote_client.h ./glremote/gl_commands.h
 	$(CXX) -c -g -o client.o $(CXXFLAGS) $(INCLUDES) ./glremote/glremote.cpp 
 
 gl_client: client.cpp client.o

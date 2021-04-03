@@ -3,13 +3,16 @@
 #include <string>
 #include <iostream>
 // #include <GL/glew.h>
-#include "glremote/glremote.h"
+#include "glremote/glremote_client.h"
 #include "gl_commands.h"
 
 #define GL_SET_COMMAND(PTR, FUNCNAME) gl_##FUNCNAME##_t *PTR = (gl_##FUNCNAME##_t *)malloc(sizeof(gl_##FUNCNAME##_t)); PTR->cmd = GLSC_##FUNCNAME
 
 zmq::context_t ctx2;
 zmq::socket_t sock2(ctx2, zmq::socket_type::req);
+
+template <typename T, int N>
+inline int array_memory_size( T (&a)[N] ) { return sizeof a; }
 
 // extern zmq::socket_t sock2;
 void* send_data(unsigned int cmd, void * cmd_data, int size){
@@ -191,6 +194,8 @@ unsigned int glCreateShader(unsigned int type){
 }
 
 void glShaderSource(int shader, int count, const char *const *string, const int* length){
+    std::cout << __func__ << std::endl;
+
     GL_SET_COMMAND(c, glShaderSource);
     c->cmd = GLSC_glShaderSource;
     c->shader = shader;

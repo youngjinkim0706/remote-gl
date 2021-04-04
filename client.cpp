@@ -7,6 +7,9 @@
 
 #define GL_SET_COMMAND(PTR, FUNCNAME) gl_##FUNCNAME##_t *PTR = (gl_##FUNCNAME##_t *)malloc(sizeof(gl_##FUNCNAME##_t)); PTR->cmd = GLSC_##FUNCNAME
 
+#define WIDTH 1024
+#define HEIGHT 768
+
 const char* vertexShaderSource = 
     "#version 330 core\n"
     "in vec3 positionAttribute;"
@@ -47,66 +50,26 @@ int main(int argc, char* argv[]) {
     // sock2.connect("tcp://" + std::string(argv[1]) + ":" + std::string(argv[2]));
 
     // shader initialization
-    int result;
-    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-	glCompileShader(fragmentShader); 
-	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &result);
-
-    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &result);
-    
-    // link shader program
-    unsigned int triangleShaderProgramID;
-    triangleShaderProgramID = glCreateProgram();
-
-    glAttachShader(triangleShaderProgramID, vertexShader);
-	glAttachShader(triangleShaderProgramID, fragmentShader);
-	glLinkProgram(triangleShaderProgramID);	
-    glGetProgramiv(triangleShaderProgramID, GL_LINK_STATUS, &result);
-    // bind vbo
-    unsigned int triangleVertexArrayObject;
-    unsigned int trianglePositionVertexBufferObjectID, triangleColorVertexBufferObjectID;
-    glGenBuffers(1, &trianglePositionVertexBufferObjectID);
-    glBindBuffer(GL_ARRAY_BUFFER, trianglePositionVertexBufferObjectID);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(position), position, GL_STATIC_DRAW); 
-
-	glGenBuffers(1, &triangleColorVertexBufferObjectID);
-	glBindBuffer(GL_ARRAY_BUFFER, triangleColorVertexBufferObjectID);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(color), color, GL_STATIC_DRAW);
-
-    //vertex arrays
-    glGenVertexArrays(1, &triangleVertexArrayObject);
-	glBindVertexArray(triangleVertexArrayObject);
-
-    int positionAttribute;
-    positionAttribute = glGetAttribLocation(triangleShaderProgramID, "positionAttribute");
-
-	glBindBuffer(GL_ARRAY_BUFFER, trianglePositionVertexBufferObjectID);
-	glVertexAttribPointer(positionAttribute, 3, GL_FLOAT, GL_FALSE, 0, 0);
-	glEnableVertexAttribArray(positionAttribute);
-
-	int colorAttribute = glGetAttribLocation(triangleShaderProgramID, "colorAttribute");
-	
-    glBindBuffer(GL_ARRAY_BUFFER, triangleColorVertexBufferObjectID);
-	glVertexAttribPointer(colorAttribute, 3, GL_FLOAT, GL_FALSE, 0, 0);
-	glEnableVertexAttribArray(colorAttribute);
-
-	glBindVertexArray(0);
-
-	glUseProgram(triangleShaderProgramID);
-	glBindVertexArray(triangleVertexArrayObject);
-
-    while (1){
-
-        glClearColor(0, 0, 0, 1); 
-        glClear(GL_COLOR_BUFFER_BIT); 
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        // std::cout << sizeof(gl_glClearColor_t) + sizeof(gl_glClear_t) + sizeof(gl_glDrawArrays_t) << std::endl;
-        glSwapBuffer();
+    while  (1){
+    float ratio = WIDTH / (float) HEIGHT;
+    glViewport(0, 0, WIDTH, HEIGHT);
+    glClear(GL_COLOR_BUFFER_BIT);
+    // glMatrixMode(GL_PROJECTION);
+    // glLoadIdentity();
+    // glOrtho(-ratio, ratio, -1.f, 1.f, 1.f, -1.f);
+    // glMatrixMode(GL_MODELVIEW);
+    // glLoadIdentity();
+    // glRotatef(0.f, 0.f, 0.f, 1.f);
+    glBegin(GL_TRIANGLES);
+    glColor3f(1.f, 0.f, 0.f);
+    glVertex3f(-0.6f, -0.4f, 0.f);
+    glColor3f(0.f, 1.f, 0.f);
+    glVertex3f(0.6f, -0.4f, 0.f);
+    glColor3f(0.f, 0.f, 1.f);
+    glVertex3f(0.f, 0.6f, 0.f);
+    glEnd();
+    glSwapBuffer();
     }
-    return 0;
+        return 0;
 }
 

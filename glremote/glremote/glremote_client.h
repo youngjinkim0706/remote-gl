@@ -1554,7 +1554,7 @@ GL_APICALL void GL_APIENTRY glGetProgramiv(int program, unsigned int pname, int 
 GL_APICALL void GL_APIENTRY glGenBuffers(int n, unsigned int *buffers);
 GL_APICALL void GL_APIENTRY glBindBuffer(unsigned int target, unsigned int id);
 GL_APICALL void GL_APIENTRY glBufferData(unsigned int target, long int size, const void *data, unsigned int usage);
-GL_APICALL void GL_APIENTRY glGenVertexArrays(int n, const unsigned int *arrays);
+GL_APICALL void GL_APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
 GL_APICALL void GL_APIENTRY glBindVertexArray(unsigned int array);
 GL_APICALL int GL_APIENTRY glGetAttribLocation(unsigned int programObj, const char *name);
 GL_APICALL void GL_APIENTRY glVertexAttribPointer(unsigned int index, int size, unsigned int type, bool normalized, int stride, const void *pointer);
@@ -1564,3 +1564,8 @@ GL_APICALL void GL_APIENTRY glClearColor(float red, float green, float blue, flo
 GL_APICALL void GL_APIENTRY glDrawArrays(unsigned int mode, int first, int count);
 GL_APICALL void GL_APIENTRY glSwapBuffer();
 GL_APICALL void GL_APIENTRY glViewport(int x, int y, int width, int height);
+
+GL_APICALL void GL_APIENTRY glMatrixMode (GLenum mode);
+GL_APICALL void GL_APIENTRY glLoadIdentity ();
+GL_APICALL void GL_APIENTRY glRotatef (GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
+GL_APICALL void GL_APIENTRY glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLdouble zNear, GLdouble zFar);

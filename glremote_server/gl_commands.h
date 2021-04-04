@@ -1,4 +1,4 @@
-#include "glremote/glremote_client.h"
+#include <GL/glew.h>
 #include <stdint.h>
 // add all godot gl command
 enum GL_Server_Command {

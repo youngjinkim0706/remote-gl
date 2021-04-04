@@ -13,7 +13,7 @@
 // #include <GL/glut.h>
 
 
-#include "../glremote/gl_commands.h"
+#include "gl_commands.h"
 
 #define BUFFER_SIZE 1024
 #define WIDTH 1024

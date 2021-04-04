@@ -10,6 +10,22 @@ static void errorCallback(int errorCode, const char *errorDescription)
     fprintf(stderr, "Error: %s\n", errorDescription);
 }
 
+void GLAPIENTRY
+MessageCallback( GLenum source,
+                 GLenum type,
+                 GLuint id,
+                 GLenum severity,
+                 GLsizei length,
+                 const GLchar* message,
+                 const void* userParam ){
+    fprintf( stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+           ( type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
+            type, severity, message );
+    if(type == GL_DEBUG_TYPE_ERROR){
+        exit (-1);
+    }
+}
+
 void Server::server_bind()
 {
     sock = zmq::socket_t(ctx, zmq::socket_type::rep);
@@ -78,6 +94,8 @@ void Server::init_gl()
     }
      
      
+    glEnable              ( GL_DEBUG_OUTPUT );
+    glDebugMessageCallback( MessageCallback, 0 );
      
      
 
@@ -102,6 +120,7 @@ void Server::run()
         auto res = sock.recv(msg, zmq::recv_flags::none);
         gl_command_t *c = (gl_command_t *)msg.data();
         //  
+        // std::cout << "CMD:\t" << c->cmd << std::endl;
         switch (c->cmd)
         {
         case GLSC_glClear:
@@ -139,18 +158,7 @@ void Server::run()
 
             break;
         }
-         case GLSC_glRotatef:
-        {
-             
-            std::cout << "rotate?" << std::endl;
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
-            gl_glRotatef_t *cmd_data = (gl_glRotatef_t *)data_msg.data();
-
-            glRotatef((float) glfwGetTime() * 50.f, cmd_data->x, cmd_data->y, cmd_data->z); // angle can be changed;
- 
-            break;
-        }
+        
         case GLSC_glVertex3f:
         {
              
@@ -317,18 +325,7 @@ void Server::run()
              
             break;
         }
-        case GLSC_glMatrixMode:{
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
-            gl_glMatrixMode_t *cmd_data = (gl_glMatrixMode_t *)data_msg.data();
-            glMatrixMode(cmd_data->mode);
-             
-            break;
-        }
-        case GLSC_glLoadIdentity:{
-            glLoadIdentity();
-            break;
-        }
+        
         case GLSC_glCreateProgram:
         {
             zmq::message_t data_msg;
@@ -620,6 +617,26 @@ void Server::run()
 
             break;
         }
+        case GLSC_glBufferSubData:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+            gl_glBufferSubData_t *cmd_data = (gl_glBufferSubData_t *)data_msg.data();
+            void *buffer_data = malloc(cmd_data->size);
+            // float buffer_data[9];
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            if(!more_data.empty()){
+                memcpy((void *)buffer_data, more_data.data(), cmd_data->size);
+                glBufferSubData(cmd_data->target, cmd_data->offset, cmd_data->size, buffer_data);
+            }else{
+                glBufferSubData(cmd_data->target, cmd_data->offset, cmd_data->size, NULL);
+            }
+
+            break;
+        }
         case GLSC_glUniform4fv:
         {
             zmq::message_t data_msg;
@@ -629,11 +646,12 @@ void Server::run()
 
             zmq::message_t more_data;
             res = sock.recv(more_data, zmq::recv_flags::none);
-            void *buffer_data = malloc(more_data.size());
+            GLfloat *buffer_data = new GLfloat[4];
             
             if(!more_data.empty()){
                 memcpy((void *)buffer_data, more_data.data(), more_data.size());
-                glUniform4fv(cmd_data->location, cmd_data->count, static_cast<const GLfloat*>(buffer_data));
+                
+                glUniform4fv(cmd_data->location, cmd_data->count, buffer_data);
             }else{
                 glUniform4fv(cmd_data->location, cmd_data->count, NULL);
             }
@@ -649,11 +667,11 @@ void Server::run()
 
             zmq::message_t more_data;
             res = sock.recv(more_data, zmq::recv_flags::none);
-            void *buffer_data = malloc(more_data.size());
+            GLfloat *buffer_data = new GLfloat[4];
             
             if(!more_data.empty()){
                 memcpy((void *)buffer_data, more_data.data(), more_data.size());
-                glVertexAttrib4fv(cmd_data->index, static_cast<const GLfloat*>(buffer_data));
+                glVertexAttrib4fv(cmd_data->index, buffer_data);
             }else{
                 glVertexAttrib4fv(cmd_data->index, NULL);
             }
@@ -685,11 +703,11 @@ void Server::run()
 
             zmq::message_t more_data;
             res = sock.recv(more_data, zmq::recv_flags::none);
-            void *buffer_data = malloc(more_data.size());
+            GLfloat *buffer_data = new GLfloat[2];
             
             if(!more_data.empty()){
                 memcpy((void *)buffer_data, more_data.data(), more_data.size());
-                glUniform4fv(cmd_data->location, cmd_data->count, static_cast<const GLfloat*>(buffer_data));
+                glUniform4fv(cmd_data->location, cmd_data->count, buffer_data);
             }else{
                 glUniform4fv(cmd_data->location, cmd_data->count, NULL);
             }
@@ -705,11 +723,11 @@ void Server::run()
 
             zmq::message_t more_data;
             res = sock.recv(more_data, zmq::recv_flags::none);
-            void *buffer_data = malloc(more_data.size());
+            GLfloat *buffer_data = new GLfloat[16];
             
             if(!more_data.empty()){
                 memcpy((void *)buffer_data, more_data.data(), more_data.size());
-                glUniformMatrix4fv(cmd_data->location, cmd_data->count, cmd_data->transpose, static_cast<const GLfloat*>(buffer_data));
+                glUniformMatrix4fv(cmd_data->location, cmd_data->count, cmd_data->transpose, buffer_data);
             }else{
                 glUniformMatrix4fv(cmd_data->location, cmd_data->count, cmd_data->transpose,  NULL);
             }
@@ -773,8 +791,6 @@ void Server::run()
         }
         case GLSC_glGetAttribLocation:
         {
-             
-
             zmq::message_t data_msg;
             auto res = sock.recv(data_msg, zmq::recv_flags::none);
             gl_glGetAttribLocation_t *cmd_data = (gl_glGetAttribLocation_t *)data_msg.data();
@@ -790,7 +806,59 @@ void Server::run()
             ret.rebuild(sizeof(int));
             memcpy(ret.data(), &positionAttr, sizeof(int));
              
+            break;
+        }
+        case GLSC_glBindAttribLocation:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glBindAttribLocation_t *cmd_data = (gl_glBindAttribLocation_t *)data_msg.data();
 
+            char *buffer_data;
+            // float buffer_data[9];
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            glBindAttribLocation(cmd_data->program, cmd_data->index, more_data.to_string().c_str());
+ 
+            break;
+        }
+        case GLSC_glGetUniformLocation:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glGetUniformLocation_t *cmd_data = (gl_glGetUniformLocation_t *)data_msg.data();
+
+            char *buffer_data;
+            // float buffer_data[9];
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            GLint location  = glGetUniformLocation(cmd_data->program, more_data.to_string().c_str());
+
+            hasReturn = true;
+            ret.rebuild(sizeof(GLint));
+            memcpy(ret.data(), &location, sizeof(GLint));
+             
+            break;
+        }
+        case GLSC_glGetUniformBlockIndex:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glGetUniformBlockIndex_t *cmd_data = (gl_glGetUniformBlockIndex_t *)data_msg.data();
+
+            char *buffer_data;
+            // float buffer_data[9];
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            GLint index = glGetUniformBlockIndex(cmd_data->program, more_data.to_string().c_str());
+
+            hasReturn = true;
+            ret.rebuild(sizeof(GLint));
+            memcpy(ret.data(), &index, sizeof(GLint));
+             
             break;
         }
         case GLSC_glGetStringi:
@@ -800,6 +868,24 @@ void Server::run()
             gl_glGetStringi_t *cmd_data = (gl_glGetStringi_t *)data_msg.data();
 
             const GLubyte *strings = glGetStringi(cmd_data->name, cmd_data->index);
+            std::string result;
+            // std::cout << strings << strlen(strings) << std::endl;
+            result.append(reinterpret_cast<const char *>(strings)); // new style
+            hasReturn = true;
+            ret.rebuild(result.size());
+            memcpy(ret.data(), result.data(), result.size());
+            // const GLubyte *strings2 = reinterpret_cast<const GLubyte *>(ret);
+            
+            // std::cout << result2 << std::endl;
+            break;
+        }
+        case GLSC_glGetString:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glGetString_t *cmd_data = (gl_glGetString_t *)data_msg.data();
+
+            const GLubyte *strings = glGetString(cmd_data->name);
             std::string result;
             // std::cout << strings << strlen(strings) << std::endl;
             result.append(reinterpret_cast<const char *>(strings)); // new style
@@ -878,19 +964,7 @@ void Server::run()
 
             break;
         }
-        case GLSC_glOrtho:
-        {
-             
-
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
-            gl_glOrtho_t *cmd_data = (gl_glOrtho_t *)data_msg.data();
-            //  
-            glOrtho(cmd_data->left, cmd_data->right, cmd_data->bottom, cmd_data->top, cmd_data->zNear, cmd_data->zFar);
-             
-
-            break;
-        }
+        
         case GLSC_bufferSwap:
         {
             double currentTime = glfwGetTime();
@@ -1027,7 +1101,7 @@ void Server::run()
             zmq::message_t data_msg;
             auto res = sock.recv(data_msg, zmq::recv_flags::none);
             gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data_msg.data();
-
+            
             // GLuint result;
             glBindTexture(cmd_data->target, cmd_data->texture);
             break;
@@ -1037,6 +1111,7 @@ void Server::run()
             zmq::message_t data_msg;
             auto res = sock.recv(data_msg, zmq::recv_flags::none);
             gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)data_msg.data();
+            // std::cout << cmd_data->target << std::endl;
             glGenerateMipmap(cmd_data->target);
 
             break;
@@ -1046,7 +1121,7 @@ void Server::run()
             zmq::message_t data_msg;
             auto res = sock.recv(data_msg, zmq::recv_flags::none);
             gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data_msg.data();
-            glGenerateMipmap(cmd_data->mode);
+            glFrontFace(cmd_data->mode);
 
             break;
         }
@@ -1090,6 +1165,8 @@ void Server::run()
             zmq::message_t data_msg;
             auto res = sock.recv(data_msg, zmq::recv_flags::none);
             gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data_msg.data();
+            // std::cout << cmd_data->location << "\t" << cmd_data->v0 << std::endl;
+
             glUniform1i(cmd_data->location, cmd_data->v0);
             break;
         }
@@ -1203,13 +1280,13 @@ void Server::run()
             if(!more_data.empty()){                 
                 const void *buffer_data = malloc(more_data.size());
                 memcpy((void *)buffer_data, more_data.data(), more_data.size());                
-                glTexImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset, cmd_data->yoffset,
+                glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset, cmd_data->yoffset,
                          cmd_data->width, cmd_data->height,
                          cmd_data->format,
                          cmd_data->type, buffer_data);            
             }
             else{
-                glTexImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset, cmd_data->yoffset,
+                glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset, cmd_data->yoffset,
                          cmd_data->width, cmd_data->height,
                          cmd_data->format,
                          cmd_data->type, NULL);     

@@ -73,6 +73,7 @@ enum GL_Server_Command {
 	GLSC_glClearDepthf,
 	GLSC_glClearBufferfv,
 	GLSC_glGetStringi,
+	GLSC_glGetString,
 	GLSC_glTexSubImage2D,
 	GLSC_glReadPixels,
 	GLSC_glBlendFuncSeparate,
@@ -85,26 +86,16 @@ enum GL_Server_Command {
 	GLSC_glUniform1f,
 	GLSC_glFramebufferTextureLayer,
 	GLSC_glRenderbufferStorageMultisample,
-	GLSC_glLoadIdentity,
-	GLSC_glMatrixMode,
-	GLSC_glRotatef,
-	GLSC_glOrtho,
+	GLSC_glGetUniformLocation,
+	GLSC_glGetUniformBlockIndex,
+	GLSC_glBufferSubData,
+	GLSC_glBindAttribLocation,
 };
 
 typedef struct {
 	unsigned int cmd;
 	GLenum cap;
 } gl_glDisable_t, gl_glEnable_t;
-
-typedef struct {
-	unsigned int cmd;
-	GLdouble left;
-	GLdouble right;
-	GLdouble bottom;
-	GLdouble top;
-	GLdouble zNear;
-	GLdouble zFar;
-} gl_glOrtho_t;
 
 typedef struct {
 	unsigned int cmd;
@@ -126,14 +117,6 @@ typedef struct {
 	GLenum pname;
 	GLint param;
 } gl_glTexParameteri_t;
-
-typedef struct {
-	unsigned int cmd;
-	GLfloat angle;
-	GLfloat x;
-	GLfloat y;
-	GLfloat z;
-} gl_glRotatef_t;
 
 typedef struct {
 	unsigned int cmd;
@@ -345,13 +328,18 @@ typedef struct {
 typedef struct {
 	unsigned int cmd;
 	int size;
-} gl_command_t, gl_glLoadIdentity_t;
+} gl_command_t;
 
 typedef struct {
 	unsigned int cmd;
 	GLenum name;
 	GLuint index;
 } gl_glGetStringi_t;
+
+typedef struct {
+	unsigned int cmd;
+	GLenum name;
+} gl_glGetString_t;
 
 typedef struct {
 	unsigned int cmd;
@@ -387,13 +375,19 @@ typedef struct {
 typedef struct {
 	unsigned int cmd;
 	GLenum mode;
-} gl_glBegin_t, gl_glFrontFace_t, gl_glBlendEquation_t, gl_glMatrixMode_t;
+} gl_glBegin_t, gl_glFrontFace_t, gl_glBlendEquation_t;
 
 typedef struct {
 	unsigned int cmd;
 	GLenum sfactor;
 	GLenum dfactor;
 } gl_glBlendFunc_t;
+
+typedef struct {
+	unsigned int cmd;
+	GLuint program;
+	const GLchar *name;
+} gl_glGetUniformLocation_t, gl_glGetUniformBlockIndex_t;
 
 typedef struct {
 	unsigned int cmd;
@@ -573,6 +567,14 @@ typedef struct {
 
 typedef struct {
 	unsigned int cmd;
+	GLenum target;
+	GLintptr offset;
+	GLsizeiptr size;
+	const void *data;
+} gl_glBufferSubData_t;
+
+typedef struct {
+	unsigned int cmd;
 	GLsizei n;
 	GLuint *arrays;
 } gl_glGenVertexArrays_t;
@@ -617,3 +619,10 @@ typedef struct {
 	int first;
 	int count;
 } gl_glDrawArrays_t;
+
+typedef struct {
+	unsigned int cmd;
+	GLuint program;
+	GLuint index;
+	const GLchar *name;
+} gl_glBindAttribLocation_t;

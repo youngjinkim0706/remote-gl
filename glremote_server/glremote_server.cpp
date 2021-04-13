@@ -82,17 +82,11 @@ void Server::init_gl()
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 
-    glewExperimental = GL_TRUE;
-    GLenum errorCode = glewInit();
-    if (GLEW_OK != errorCode)
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
-
-        std::cerr << "Error: GLEW 초기화 실패 - " << std::endl;
-
-        glfwTerminate();
-        std::exit(EXIT_FAILURE);
-    }
-     
+        std::cout << "Failed to initialize GLAD" << std::endl;
+         std::exit(EXIT_FAILURE);
+    }    
      
     glEnable              ( GL_DEBUG_OUTPUT );
     glDebugMessageCallback( MessageCallback, 0 );
@@ -1262,6 +1256,31 @@ void Server::run()
                          cmd_data->width, cmd_data->height,
                          cmd_data->border, cmd_data->format,
                          cmd_data->type, NULL);     
+            }             
+            break;
+        }
+        case GLSC_glCompressedTexImage2D:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glCompressedTexImage2D_t *cmd_data = (gl_glCompressedTexImage2D_t *)data_msg.data();
+
+            // float buffer_data[9];
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+
+            if(!more_data.empty()){                 
+                const void *buffer_data = malloc(more_data.size());
+                memcpy((void *)buffer_data, more_data.data(), more_data.size());                
+                glCompressedTexImage2D(cmd_data->target, cmd_data->level, cmd_data->internalformat,
+                         cmd_data->width, cmd_data->height,
+                         cmd_data->border, cmd_data->imageSize, buffer_data);            
+            }
+            else{
+                glCompressedTexImage2D(cmd_data->target, cmd_data->level, cmd_data->internalformat,
+                         cmd_data->width, cmd_data->height,
+                         cmd_data->border, cmd_data->imageSize, NULL);     
             }             
             break;
         }

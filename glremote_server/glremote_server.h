@@ -62,7 +62,7 @@ class Server{
         ~Server(){
             // sock.close();
             // ctx.close();
-            // glfwTerminate();
+            glfwTerminate();
             if(enableStreaming){
                 unlink(FIFO_NAME);
                 close(fd);

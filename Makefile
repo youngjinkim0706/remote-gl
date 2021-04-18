@@ -12,22 +12,22 @@ CLIENT_OBJS=client.o
 all: gl_server gl_client streamer
 
 server.o: ./glremote_server/glremote_server.cpp ./glremote_server/glremote_server.h ./glremote_server/glad/glad.h
-	$(CXX) -c -g -o server.o $(CXXFLAGS) $(INCLUDES) ./glremote_server/glremote_server.cpp
+	$(CXX) -c -pg -o server.o $(CXXFLAGS) $(INCLUDES) ./glremote_server/glremote_server.cpp
 
 gl_server: main.cpp server.o
-	$(CXX) -g -o gl_server $(CXXFLAGS) $(INCLUDES) main.cpp $(SERVER_OBJS) $(LIBS)
+	$(CXX) -pg -o gl_server $(CXXFLAGS) $(INCLUDES) main.cpp $(SERVER_OBJS) $(LIBS)
 
 client.o: ./glremote/glremote.cpp ./glremote/glremote/glremote_client.h ./glremote/gl_commands.h
-	$(CXX) -c -g -o client.o $(CXXFLAGS) $(INCLUDES) ./glremote/glremote.cpp 
+	$(CXX) -c -pg -o client.o $(CXXFLAGS) $(INCLUDES) ./glremote/glremote.cpp 
 
 gl_client: client.cpp client.o
-	$(CXX) -g -o gl_client $(CXXFLAGS) $(INCLUDES) client.cpp $(CLIENT_OBJS) $(LIBS)
+	$(CXX) -pg -o gl_client $(CXXFLAGS) $(INCLUDES) client.cpp $(CLIENT_OBJS) $(LIBS)
 
 streamer: streamer.cpp
-	$(CXX) -g -o stremaer $(CXXFLAGS) $(STREAMER_INCLUDES) streamer.cpp $(STREAMER_LIBS)
+	$(CXX) -pg -o stremaer $(CXXFLAGS) $(STREAMER_INCLUDES) streamer.cpp $(STREAMER_LIBS)
 
 test: test.cpp
-	$(CXX) -g -o test $(CXXFLAGS) $(INCLUDES) test.cpp $(LIBS)
+	$(CXX) -pg -o test $(CXXFLAGS) $(INCLUDES) test.cpp $(LIBS)
 
 clean:
 	rm gl_server gl_client streamer *.o 

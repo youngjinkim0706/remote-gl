@@ -6,3 +6,6 @@ test
 streamer
 .vscode/*
 uftrace.data/*
+protobuf/*
+*.trace
+splab_stream

@@ -1,4 +1,0 @@
-# symbols: 2
-0000000000001100 T XGetXCBConnection
-0000000000001110 T XSetEventQueueOwner
-000000000000111f ? __sym_end

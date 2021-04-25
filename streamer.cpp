@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <string>
 #include <unistd.h>
+#include <chrono>
 
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <boost/scoped_ptr.hpp>
@@ -67,9 +68,12 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
     try{
         boost::interprocess::message_queue::size_type recvd_size;
         unsigned int priority;
-
+        
+        auto start = std::chrono::steady_clock::now();
         mq.get()->receive(pixel_data, size, recvd_size, priority);
-        // std::cout << mq.get_num_msg() << std::endl;
+        auto end = std::chrono::steady_clock::now();
+
+        std::cout << "read data from mq: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
 
     }
     catch(boost::interprocess::interprocess_exception &ex){
@@ -80,11 +84,15 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
     gst_buffer_map (buffer, &map, GST_MAP_WRITE);
     
     // memcpy (map.data, msg.data(), size);
+    auto start = std::chrono::steady_clock::now();
+
     memcpy (map.data, pixel_data, size);
     free(pixel_data);
 
     gst_buffer_unmap (buffer, &map);
-    
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "gst buffer: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
+
     /* increment the timestamp every 1/2 second */
     GST_BUFFER_PTS (buffer) = ctx->timestamp;
     GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (1, GST_SECOND, 144);

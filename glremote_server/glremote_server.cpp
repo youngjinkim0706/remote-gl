@@ -98,8 +98,9 @@ void Server::run() {
     bool hasReturn = false;
 
     auto res = sock.recv(msg, zmq::recv_flags::none);
+    
     gl_command_t *c = (gl_command_t *)msg.data();
-    // std::cout << c->cmd << std::endl;
+
     switch (c->cmd) {
     case GLSC_glClear: {
       zmq::message_t data_msg;
@@ -239,6 +240,7 @@ void Server::run() {
                   << errorLog << std::endl;
       }
 
+      hasReturn = true;
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(int));
 
@@ -267,6 +269,7 @@ void Server::run() {
       glReadPixels(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height,
                    cmd_data->format, cmd_data->type, result);
 
+      hasReturn = true;
       ret.rebuild(size);
 
       memcpy(ret.data(), result, size);
@@ -283,6 +286,24 @@ void Server::run() {
 
       break;
     }
+      case GLSC_glBlendFunc:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glBlendFunc_t *cmd_data = (gl_glBlendFunc_t *)data_msg.data();
+            glBlendFunc(cmd_data->sfactor, cmd_data->dfactor);
+
+            break;
+        }
+        case GLSC_glVertexAttrib4f:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glVertexAttrib4f_t *cmd_data = (gl_glVertexAttrib4f_t *)data_msg.data();
+            glVertexAttrib4f(cmd_data->index, cmd_data->x,cmd_data->y,cmd_data->z,cmd_data->w);
+
+            break;
+        }
     case GLSC_glDisableVertexAttribArray: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -335,6 +356,65 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glTexImage3D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+      gl_glTexImage3D_t *cmd_data = (gl_glTexImage3D_t *)data_msg.data();
+
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none);
+
+      if (!more_data.empty()) {
+        const void *buffer_data = malloc(more_data.size());
+        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+        glTexImage3D(cmd_data->target, cmd_data->level,
+                     cmd_data->internalformat, cmd_data->width,
+                     cmd_data->height, cmd_data->depth, cmd_data->border,
+                     cmd_data->format, cmd_data->type, buffer_data);
+      } else {
+        glTexImage3D(cmd_data->target, cmd_data->level,
+                     cmd_data->internalformat, cmd_data->width,
+                     cmd_data->height, cmd_data->depth, cmd_data->border,
+                     cmd_data->format, cmd_data->type, NULL);
+      }
+      break;
+    }
+    case GLSC_glGenerateMipmap: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glGenerateMipmap_t *cmd_data =
+          (gl_glGenerateMipmap_t *)data_msg.data();
+      glGenerateMipmap(cmd_data->target);
+
+      break;
+    }
+    case GLSC_glFrontFace: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data_msg.data();
+      glFrontFace(cmd_data->mode);
+
+      break;
+    }
+    case GLSC_glDepthMask: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glDepthMask_t *cmd_data = (gl_glDepthMask_t *)data_msg.data();
+      glDepthMask(cmd_data->flag);
+
+      break;
+    }
+    case GLSC_glBlendEquation: {
+      zmq::message_t data_msg;
+
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+      gl_glBlendEquation_t *cmd_data = (gl_glBlendEquation_t *)data_msg.data();
+      glBlendEquation(cmd_data->mode);
+
+      break;
+    }
     case GLSC_glEnable: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -363,6 +443,8 @@ void Server::run() {
         std::cerr << "ERROR: shader program 연결 실패\n"
                   << errorLog << std::endl;
       }
+
+      hasReturn = true;
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(int));
 
@@ -380,6 +462,24 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glTexStorage2D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glTexStorage2D_t *cmd_data = (gl_glTexStorage2D_t *)data_msg.data();
+      glTexStorage2D(cmd_data->target, cmd_data->levels,
+                     cmd_data->internalformat, cmd_data->width,
+                     cmd_data->height);
+
+      break;
+    }
+    case GLSC_glTexParameteri: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glTexParameteri_t *cmd_data = (gl_glTexParameteri_t *)data_msg.data();
+      glTexParameteri(cmd_data->target, cmd_data->pname, cmd_data->param);
+
+      break;
+    }
     case GLSC_glGenBuffers: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -387,6 +487,7 @@ void Server::run() {
       GLuint *result = new GLuint[cmd_data->n];
       glGenBuffers(cmd_data->n, result);
 
+      hasReturn = true;
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
       memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
 
@@ -400,6 +501,7 @@ void Server::run() {
       GLuint *result = new GLuint[cmd_data->n];
       glGenRenderbuffers(cmd_data->n, result);
 
+      hasReturn = true;
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
       memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
 
@@ -434,6 +536,31 @@ void Server::run() {
                                 cmd_data->renderbuffer);
 
       break;
+    }
+    case GLSC_glTexSubImage3D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+      gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)data_msg.data();
+
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none);
+
+      if (!more_data.empty()) {
+        const void *buffer_data = malloc(more_data.size());
+        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+        glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                        cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
+                        cmd_data->height, cmd_data->depth, cmd_data->format,
+                        cmd_data->type, buffer_data);
+      } else {
+        glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                        cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
+                        cmd_data->height, cmd_data->depth, cmd_data->format,
+                        cmd_data->type, NULL);
+      }
+      break;
+
     }
     case GLSC_glBindBuffer: {
       zmq::message_t data_msg;
@@ -470,6 +597,7 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
+      hasReturn = true;
       memcpy(&texture, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteTextures(cmd_data->n, &texture);
       break;
@@ -484,8 +612,40 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
+      hasReturn = true;
+
       memcpy(&framebuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteFramebuffers(cmd_data->n, &framebuffer);
+      break;
+    }
+    case GLSC_glUniform1f: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glUniform1f_t *cmd_data = (gl_glUniform1f_t *)data_msg.data();
+      glUniform1f(cmd_data->location, cmd_data->v0);
+
+      break;
+    }
+    case GLSC_glFramebufferTextureLayer: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glFramebufferTextureLayer_t *cmd_data =
+          (gl_glFramebufferTextureLayer_t *)data_msg.data();
+      glFramebufferTextureLayer(cmd_data->target, cmd_data->attachment,
+                                cmd_data->texture, cmd_data->level,
+                                cmd_data->layer);
+
+      break;
+    }
+    case GLSC_glRenderbufferStorageMultisample: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glRenderbufferStorageMultisample_t *cmd_data =
+          (gl_glRenderbufferStorageMultisample_t *)data_msg.data();
+      glRenderbufferStorageMultisample(cmd_data->target, cmd_data->samples,
+                                       cmd_data->internalformat,
+                                       cmd_data->width, cmd_data->height);
+
       break;
     }
     case GLSC_glDeleteRenderbuffers: {
@@ -498,6 +658,8 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
+      hasReturn = true;
+
       memcpy(&renderbuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteRenderbuffers(cmd_data->n, &renderbuffer);
       break;
@@ -511,6 +673,8 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
+      hasReturn = true;
+
       memcpy(buffer_data, more_data.data(), sizeof(GLfloat) * 4);
       glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer, buffer_data);
       break;
@@ -607,6 +771,40 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glUniform1i: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data_msg.data();
+      glUniform1i(cmd_data->location, cmd_data->v0);
+
+      break;
+    }
+    case GLSC_glUniformBlockBinding: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glUniformBlockBinding_t *cmd_data =
+          (gl_glUniformBlockBinding_t *)data_msg.data();
+      glUniformBlockBinding(cmd_data->program, cmd_data->uniformBlockIndex,
+                            cmd_data->uniformBlockBinding);
+
+      break;
+    }
+    case GLSC_glPixelStorei: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glPixelStorei_t *cmd_data = (gl_glPixelStorei_t *)data_msg.data();
+      glPixelStorei(cmd_data->pname, cmd_data->param);
+
+      break;
+    }
+    case GLSC_glTexParameterf: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glTexParameterf_t *cmd_data = (gl_glTexParameterf_t *)data_msg.data();
+      glTexParameterf(cmd_data->target, cmd_data->pname, cmd_data->param);
+
+      break;
+    }
     case GLSC_glVertexAttrib4fv: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -686,6 +884,7 @@ void Server::run() {
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenVertexArrays(cmd_data->n, result);
+      hasReturn = true;
 
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
       memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
@@ -799,6 +998,30 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glCompressedTexImage2D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glCompressedTexImage2D_t *cmd_data =
+          (gl_glCompressedTexImage2D_t *)data_msg.data();
+
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none);
+
+      if (!more_data.empty()) {
+        const void *buffer_data = malloc(more_data.size());
+        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+        glCompressedTexImage2D(cmd_data->target, cmd_data->level,
+                               cmd_data->internalformat, cmd_data->width,
+                               cmd_data->height, cmd_data->border,
+                               cmd_data->imageSize, buffer_data);
+      } else {
+        glCompressedTexImage2D(cmd_data->target, cmd_data->level,
+                               cmd_data->internalformat, cmd_data->width,
+                               cmd_data->height, cmd_data->border,
+                               cmd_data->imageSize, NULL);
+      }
+      break;
+    }
     case GLSC_glGetUniformLocation: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -848,6 +1071,28 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glTexSubImage2D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+      gl_glTexSubImage2D_t *cmd_data = (gl_glTexSubImage2D_t *)data_msg.data();
+
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none);
+
+      if (!more_data.empty()) {
+        const void *buffer_data = malloc(more_data.size());
+        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+        glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                        cmd_data->yoffset, cmd_data->width, cmd_data->height,
+                        cmd_data->format, cmd_data->type, buffer_data);
+      } else {
+        glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                        cmd_data->yoffset, cmd_data->width, cmd_data->height,
+                        cmd_data->format, cmd_data->type, NULL);
+      }
+      break;
+    }
     case GLSC_glGetString: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -893,6 +1138,46 @@ void Server::run() {
 
       break;
     }
+    case GLSC_glActiveTexture: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data_msg.data();
+      glActiveTexture(cmd_data->texture);
+
+      break;
+    }
+    case GLSC_glBindTexture: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data_msg.data();
+      glBindTexture(cmd_data->target, cmd_data->texture);
+
+      break;
+    }
+    case GLSC_glTexImage2D: {
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+      gl_glTexImage2D_t *cmd_data = (gl_glTexImage2D_t *)data_msg.data();
+
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none);
+
+      if (!more_data.empty()) {
+        const void *buffer_data = malloc(more_data.size());
+        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+        glTexImage2D(cmd_data->target, cmd_data->level,
+                     cmd_data->internalformat, cmd_data->width,
+                     cmd_data->height, cmd_data->border, cmd_data->format,
+                     cmd_data->type, buffer_data);
+      } else {
+        glTexImage2D(cmd_data->target, cmd_data->level,
+                     cmd_data->internalformat, cmd_data->width,
+                     cmd_data->height, cmd_data->border, cmd_data->format,
+                     cmd_data->type, NULL);
+      }
+      break;
+    }
     case GLSC_glClearColor: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
@@ -923,6 +1208,7 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glScissor_t *cmd_data = (gl_glScissor_t *)data_msg.data();
       glScissor(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
+      break;
     }
     case GLSC_BREAK: {
       quit = true;
@@ -935,6 +1221,8 @@ void Server::run() {
 
       GLint result;
       glGetIntegerv(cmd_data->pname, &result);
+      hasReturn = true;
+
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(GLint));
 
@@ -947,6 +1235,8 @@ void Server::run() {
 
       GLfloat result;
       glGetFloatv(cmd_data->pname, &result);
+      hasReturn = true;
+
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(GLint));
 
@@ -959,7 +1249,8 @@ void Server::run() {
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenTextures(cmd_data->n, result);
-
+      
+      hasReturn = true;
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
       memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
 
@@ -973,9 +1264,11 @@ void Server::run() {
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenFramebuffers(cmd_data->n, result);
+      hasReturn = true;
 
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
       memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      break;
     }
     case GLSC_glUniform1ui: {
       zmq::message_t data_msg;
@@ -1052,12 +1345,14 @@ void Server::run() {
           std::cout << ex.what() << std::endl;
         }
       }
+      hasReturn = true;
       break;
     }
     default:
       break;
     }
     sock.send(ret, zmq::send_flags::none);
-    usleep(0.001);
+
+    // usleep(0.001);
   }
 }

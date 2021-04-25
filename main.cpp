@@ -10,11 +10,12 @@ int main(int argc, char* argv[]) {
     if (argc > 3){
         if (strcmp(argv[3], "true") == 0){
             enableStreaming = true;
+            
         }else{
             enableStreaming = false;
         }
     }
-    Server server(argv[1], argv[2], enableStreaming);
+    Server server(argv[1], argv[2], enableStreaming, argv[4]);
     server.server_bind();
     
     std::thread main_loop{&Server::run, &server};

@@ -35,8 +35,16 @@ void Server::server_bind()
 
     if (enableStreaming)
     {
-        ipc_sock = zmq::socket_t(ipc_ctx, zmq::socket_type::push);
-        ipc_sock.bind("ipc:///tmp/streamer.zmq"); // need to change
+        boost::interprocess::message_queue::remove(streaming_queue_name.c_str());
+        std::cout << streaming_queue_name.c_str() << std::endl;
+        size_t max_msg_size = WIDTH * HEIGHT * 4;
+        mq.reset(new boost::interprocess::message_queue(boost::interprocess::create_only
+                                                , streaming_queue_name.c_str()
+                                                , 1024
+                                                , max_msg_size));
+
+        // ipc_sock = zmq::socket_t(ipc_ctx, zmq::socket_type::push);
+        // ipc_sock.bind("ipc:///tmp/streamer.zmq"); // need to change
     }
 }
 
@@ -721,6 +729,54 @@ void Server::run()
              
             break;
         }
+        case GLSC_glDrawBuffers:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+            gl_glDrawBuffers_t *cmd_data = (gl_glDrawBuffers_t *)data_msg.data();
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            GLenum *buffer_data = new GLenum[cmd_data->n];
+            
+            memcpy((void *)buffer_data, more_data.data(), more_data.size());
+            glDrawBuffers(cmd_data->n, buffer_data);
+           
+            break;
+        }
+        case GLSC_glDeleteVertexArrays:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+            gl_glDeleteVertexArrays_t *cmd_data = (gl_glDeleteVertexArrays_t *)data_msg.data();
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            GLuint *buffer_data = new GLuint[cmd_data->n];
+            
+            memcpy((void *)buffer_data, more_data.data(), more_data.size());
+            glDeleteVertexArrays(cmd_data->n, buffer_data);
+           
+            break;
+        }
+        case GLSC_glDeleteBuffers:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+
+            gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)data_msg.data();
+
+            zmq::message_t more_data;
+            res = sock.recv(more_data, zmq::recv_flags::none);
+            GLuint *buffer_data = new GLuint[cmd_data->n];
+            
+            memcpy((void *)buffer_data, more_data.data(), more_data.size());
+            glDeleteBuffers(cmd_data->n, buffer_data);
+           
+            break;
+        }
         case GLSC_glReadBuffer:
         {
             zmq::message_t data_msg;
@@ -1286,6 +1342,14 @@ void Server::run()
             glDrawArraysInstanced(cmd_data->mode, cmd_data->first, cmd_data->count, cmd_data->instancecount);
             break;    
         }
+        case GLSC_glCullFace:
+        {
+            zmq::message_t data_msg;
+            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            gl_glCullFace_t *cmd_data = (gl_glCullFace_t *) data_msg.data();
+            glCullFace(cmd_data->mode);
+            break;    
+        }
         case GLSC_bufferSwap:
         {
             double currentTime = glfwGetTime();
@@ -1307,14 +1371,12 @@ void Server::run()
                 unsigned char *pixel_data = (unsigned char *)malloc(WIDTH * HEIGHT * 4); // GL_RGBA
                 glReadBuffer(GL_FRONT);
                 glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixel_data);
-
-                // zmq::message_t zmq_pixel_data(WIDTH * HEIGHT * 4);
-                // memcpy(zmq_pixel_data.data(), (void *)pixel_data, WIDTH * HEIGHT * 4);
-                // ipc_sock.send(zmq_pixel_data, zmq::send_flags::none);
-
-                if (write(fd, pixel_data, WIDTH * HEIGHT * 4) < 0)
-                {
-                     
+                try{
+                    mq.get()->send(pixel_data, WIDTH * HEIGHT * 4, 0);
+                    // std::cout << mq.get()->get_num_msg() << std::endl;
+                }
+                catch(boost::interprocess::interprocess_exception &ex){
+                      std::cout << ex.what() << std::endl;
                 }
             }
             break;
@@ -1323,5 +1385,6 @@ void Server::run()
             break;
         }
         sock.send(ret, zmq::send_flags::none);
+        usleep(0.001);
     }
 }

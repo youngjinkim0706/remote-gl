@@ -17,7 +17,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include <zmq.hpp>
+// #include <zmq.hpp>
 #include <gst/gst.h>
 #include <iostream>
 #include <fcntl.h>
@@ -25,16 +25,14 @@
 #include <string>
 #include <unistd.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb/stb_image_write.h>
+#include <boost/interprocess/ipc/message_queue.hpp>
+#include <boost/scoped_ptr.hpp>
 
 #include <gst/rtsp-server/rtsp-server.h>
 
 #define WIDTH 1024
 #define HEIGHT 768
-#define FIFO_NAME "splab_stream"
+// #define FIFO_NAME "splab_stream"
 
 typedef struct
 {
@@ -43,10 +41,12 @@ typedef struct
 } MyContext;
 
 
-zmq::context_t ctx;
-zmq::socket_t sock(ctx, zmq::socket_type::pull);
+// zmq::context_t ctx;
+// zmq::socket_t sock(ctx, zmq::socket_type::pull);
 int fd;
 
+boost::scoped_ptr<boost::interprocess::message_queue> mq;
+const char* mq_name;
 /* called when we need to give data to appsrc */
 static void
 need_data (GstElement * appsrc, guint unused, MyContext * ctx)
@@ -62,26 +62,32 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
     size = WIDTH * HEIGHT * 4;
 
     // unsigned char *pixel_data  = (unsigned char*) malloc(size); // GL_RGBA
-    unsigned char pixel_data[size];
+    unsigned char* pixel_data = new unsigned char[size];
     // std::cout << size << std::endl;
+    try{
+        boost::interprocess::message_queue::size_type recvd_size;
+        unsigned int priority;
 
+        mq.get()->receive(pixel_data, size, recvd_size, priority);
+        // std::cout << mq.get_num_msg() << std::endl;
 
-    if (read(fd, pixel_data, size) < 0 ) {
-      printf("fail to call read()\n");
     }
-    // std::cout << pixel_data << std::endl;
+    catch(boost::interprocess::interprocess_exception &ex){
+            std::cout << ex.what() << std::endl;
+    }
 
     buffer = gst_buffer_new_allocate (NULL, size, NULL);
     gst_buffer_map (buffer, &map, GST_MAP_WRITE);
     
     // memcpy (map.data, msg.data(), size);
     memcpy (map.data, pixel_data, size);
+    free(pixel_data);
 
     gst_buffer_unmap (buffer, &map);
     
     /* increment the timestamp every 1/2 second */
     GST_BUFFER_PTS (buffer) = ctx->timestamp;
-    GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (1, GST_SECOND, 2);
+    GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (1, GST_SECOND, 144);
     ctx->timestamp += GST_BUFFER_DURATION (buffer);
 
     g_signal_emit_by_name (appsrc, "push-buffer", buffer, &ret);
@@ -139,13 +145,9 @@ main (int argc, char *argv[])
     GstRTSPMountPoints *mounts;
     GstRTSPMediaFactory *factory;
 
-        // sock = zmq::socket_t(ctx, zmq::socket_type::pull);
-    sock.connect("ipc:///tmp/streamer.zmq");
+    mq_name = argv[1];
+    mq.reset(new boost::interprocess::message_queue(boost::interprocess::open_only, mq_name));
 
-    if ((fd = open(FIFO_NAME, O_RDONLY)) < 0) {
-        printf("fail to open named pipe\n");
-        return 0;
-    }
 
     gst_init (&argc, &argv);
 
@@ -164,7 +166,7 @@ main (int argc, char *argv[])
     * element with pay%d names will be a stream */
     factory = gst_rtsp_media_factory_new ();
     gst_rtsp_media_factory_set_launch (factory,
-        "( appsrc name=mysrc ! queue ! videoconvert ! x264enc ! rtph264pay name=pay0 pt=96 )");
+        "( appsrc name=mysrc ! queue ! videoconvert ! x264enc speed-preset=superfast tune=zerolatency bitrate=2250 ! rtph264pay name=pay0 pt=96 )");
 
     /* notify when our media is ready, This is called whenever someone asks for
     * the media and a new pipeline with our appsrc is created */
@@ -181,7 +183,7 @@ main (int argc, char *argv[])
     gst_rtsp_server_attach (server, NULL);
 
     /* start serving */
-    g_print ("stream ready at rtsp://172.30.1.6:8554/test\n");
+    g_print ("stream ready at rtsp://192.168.0.6:8554/test\n");
     g_main_loop_run (loop);
 
     close(fd);

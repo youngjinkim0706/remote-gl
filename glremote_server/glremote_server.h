@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <cstring>
 // #include <GL/glew.h>
+#include <boost/interprocess/ipc/message_queue.hpp>
+#include <boost/scoped_ptr.hpp>
 #include "glad/glad.h"
 #include <GLFW/glfw3.h>
 // #include <GL/glut.h>
@@ -29,34 +31,23 @@ class Server{
         
         zmq::context_t ipc_ctx;
         zmq::socket_t ipc_sock;
-        
+
+        boost::scoped_ptr<boost::interprocess::message_queue> mq;
         std::string ip_address;
         std::string port;
+        std::string streaming_queue_name;
         bool enableStreaming;
 
         GLFWwindow *window;
         static int framebufferWidth, framebufferHeight;
 
         int fd;
-        Server(char* address, char* p, bool flag){
+        Server(char* address, char* p, bool flag, const char* q_name="message_queue"){
             ip_address = std::string(address);
             port = std::string(p);
             enableStreaming = flag;
-            
             if(enableStreaming){
-                if (access(FIFO_NAME,F_OK) == 0) {
-                    unlink(FIFO_NAME);
-                }
-
-                if(mkfifo(FIFO_NAME,0666) == -1){
-                    printf("fail to call fifo()\n");
-                    exit(1);
-                }
-
-                if((fd = open(FIFO_NAME, O_WRONLY)) < 0){
-                    printf("fail to open fifo()\n");
-                    exit(1);
-                }
+                streaming_queue_name = std::string(q_name);
             }
         };
         ~Server(){

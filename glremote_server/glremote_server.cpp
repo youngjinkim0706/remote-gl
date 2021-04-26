@@ -24,7 +24,7 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
 }
 
 void Server::server_bind() {
-  sock = zmq::socket_t(ctx, zmq::socket_type::rep);
+  sock = zmq::socket_t(ctx, zmq::socket_type::pair);
 
   sock.bind("tcp://" + ip_address + ":" + port);
 
@@ -597,7 +597,6 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
-      hasReturn = true;
       memcpy(&texture, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteTextures(cmd_data->n, &texture);
       break;
@@ -612,7 +611,6 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
-      hasReturn = true;
 
       memcpy(&framebuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteFramebuffers(cmd_data->n, &framebuffer);
@@ -658,7 +656,6 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
-      hasReturn = true;
 
       memcpy(&renderbuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
       glDeleteRenderbuffers(cmd_data->n, &renderbuffer);
@@ -673,7 +670,6 @@ void Server::run() {
 
       zmq::message_t more_data;
       res = sock.recv(more_data, zmq::recv_flags::none);
-      hasReturn = true;
 
       memcpy(buffer_data, more_data.data(), sizeof(GLfloat) * 4);
       glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer, buffer_data);
@@ -1142,6 +1138,7 @@ void Server::run() {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data_msg.data();
+
       glActiveTexture(cmd_data->texture);
 
       break;
@@ -1151,7 +1148,6 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data_msg.data();
       glBindTexture(cmd_data->target, cmd_data->texture);
-
       break;
     }
     case GLSC_glTexImage2D: {
@@ -1252,8 +1248,9 @@ void Server::run() {
       
       hasReturn = true;
       ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      	std::cout << *result << "\t" << cmd_data->n << std::endl;
 
+      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
       break;
     }
     case GLSC_glGenFramebuffers: {
@@ -1358,7 +1355,8 @@ void Server::run() {
     default:
       break;
     }
-    sock.send(ret, zmq::send_flags::none);
+    if(hasReturn)
+      sock.send(ret, zmq::send_flags::none);
 
     // usleep(0.001);
   }

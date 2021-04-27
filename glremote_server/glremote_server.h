@@ -1,6 +1,7 @@
 #include <chrono>
 #include <zmq.hpp>
 #include <string.h>
+#include <map>
 #include <iostream>
 #include <thread>
 #include <fcntl.h>
@@ -38,6 +39,15 @@ class Server{
         std::string port;
         std::string streaming_queue_name;
         bool enableStreaming;
+        
+        std::map<unsigned int, unsigned int> glGenBuffers_idx_map;
+        std::map<unsigned int, unsigned int> glGenVertexArrays_idx_map;
+        std::map<unsigned int, unsigned int> glGenTextures_idx_map;
+        std::map<unsigned int, unsigned int> glGenFramebuffers_idx_map;
+        std::map<unsigned int, unsigned int> glGenRenderbuffers_idx_map;
+        std::map<unsigned int, unsigned int> glGenQueries_idx_map;
+        std::map<unsigned int, unsigned int> glGenSamplers_idx_map;
+        std::map<unsigned int, unsigned int> glGenTransformFeedbacks_idx_map;
 
         GLFWwindow *window;
         static int framebufferWidth, framebufferHeight;

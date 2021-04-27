@@ -487,9 +487,9 @@ void Server::run() {
       GLuint *result = new GLuint[cmd_data->n];
       glGenBuffers(cmd_data->n, result);
 
-      hasReturn = true;
-      ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      for (int i=0; i<cmd_data->n ; i++){
+        glGenBuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      }
 
       break;
     }
@@ -501,9 +501,9 @@ void Server::run() {
       GLuint *result = new GLuint[cmd_data->n];
       glGenRenderbuffers(cmd_data->n, result);
 
-      hasReturn = true;
-      ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      for (int i=0; i<cmd_data->n ; i++){
+        glGenRenderbuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      }
 
       break;
     }
@@ -512,7 +512,9 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindRenderbuffer_t *cmd_data =
           (gl_glBindRenderbuffer_t *)data_msg.data();
-      glBindRenderbuffer(cmd_data->target, cmd_data->renderbuffer);
+      GLuint buffer_id = (GLuint) glGenRenderbuffers_idx_map.find(cmd_data->renderbuffer)->second;
+
+      glBindRenderbuffer(cmd_data->target, buffer_id);
 
       break;
     }
@@ -566,7 +568,8 @@ void Server::run() {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindBuffer_t *cmd_data = (gl_glBindBuffer_t *)data_msg.data();
-      glBindBuffer(cmd_data->target, cmd_data->id);
+      GLuint buffer_id = (GLuint) glGenBuffers_idx_map.find(cmd_data->id)->second;
+      glBindBuffer(cmd_data->target, buffer_id);
 
       break;
     }
@@ -575,7 +578,9 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindFramebuffer_t *cmd_data =
           (gl_glBindFramebuffer_t *)data_msg.data();
-      glBindFramebuffer(cmd_data->target, cmd_data->framebuffer);
+      GLuint buffer_id = (GLuint) glGenFramebuffers_idx_map.find(cmd_data->framebuffer)->second;
+
+      glBindFramebuffer(cmd_data->target, buffer_id);
 
       break;
     }
@@ -584,7 +589,9 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindBufferBase_t *cmd_data =
           (gl_glBindBufferBase_t *)data_msg.data();
-      glBindBufferBase(cmd_data->target, cmd_data->index, cmd_data->buffer);
+      GLuint buffer_id = (GLuint) glGenBuffers_idx_map.find(cmd_data->buffer)->second;
+
+      glBindBufferBase(cmd_data->target, cmd_data->index, buffer_id);
       break;
     }
     case GLSC_glDeleteTextures: {
@@ -880,10 +887,10 @@ void Server::run() {
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenVertexArrays(cmd_data->n, result);
-      hasReturn = true;
 
-      ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      for (int i=0; i<cmd_data->n ; i++){
+        glGenVertexArrays_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      }
 
       break;
     }
@@ -958,6 +965,7 @@ void Server::run() {
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindVertexArray_t *cmd_data =
           (gl_glBindVertexArray_t *)data_msg.data();
+      GLuint array = (GLuint) glGenVertexArrays_idx_map.find(cmd_data->array)->second;
 
       glBindVertexArray(cmd_data->array);
 
@@ -1147,6 +1155,8 @@ void Server::run() {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
       gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data_msg.data();
+      GLuint texture = (GLuint) glGenTextures_idx_map.find(cmd_data->texture)->second;
+
       glBindTexture(cmd_data->target, cmd_data->texture);
       break;
     }
@@ -1246,11 +1256,9 @@ void Server::run() {
       GLuint *result = new GLuint[cmd_data->n];
       glGenTextures(cmd_data->n, result);
       
-      hasReturn = true;
-      ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      	std::cout << *result << "\t" << cmd_data->n << std::endl;
-
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      for (int i=0; i<cmd_data->n ; i++){
+        glGenTextures_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      }
       break;
     }
     case GLSC_glGenFramebuffers: {
@@ -1261,10 +1269,10 @@ void Server::run() {
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenFramebuffers(cmd_data->n, result);
-      hasReturn = true;
-
-      ret.rebuild(sizeof(GLuint) * cmd_data->n);
-      memcpy(ret.data(), result, sizeof(GLuint) * cmd_data->n);
+      
+      for (int i=0; i<cmd_data->n ; i++){
+          glGenFramebuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      }
       break;
     }
     case GLSC_glUniform1ui: {

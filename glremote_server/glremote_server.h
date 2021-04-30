@@ -39,7 +39,9 @@ class Server{
         std::string port;
         std::string streaming_queue_name;
         bool enableStreaming;
-        
+        int seq_cmd;
+        std::map<std::string, void*> command_cache;
+
         std::map<unsigned int, unsigned int> glGenBuffers_idx_map;
         std::map<unsigned int, unsigned int> glGenVertexArrays_idx_map;
         std::map<unsigned int, unsigned int> glGenTextures_idx_map;

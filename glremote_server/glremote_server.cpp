@@ -91,6 +91,8 @@ void Server::run() {
   double lastTime = glfwGetTime();
   int numOfFrames = 0;
   int count = 0;
+  seq_cmd = 0;
+
   while (!quit) {
     // waiting until data comes here
     zmq::message_t msg;
@@ -418,7 +420,23 @@ void Server::run() {
     case GLSC_glEnable: {
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glEnable_t *cmd_data = (gl_glEnable_t *)data_msg.data();
+      gl_glEnable_t *cmd_data;
+      std::string key = std::to_string(c->cmd) + "_" + std::to_string(seq_cmd);
+      bool hit = false;
+      if(data_msg.empty()){
+          hit = true;
+          cmd_data = (gl_glEnable_t *)command_cache.find(key)->second;
+      }else{
+        char* data = new char[data_msg.size()];
+        memcpy((void*)data, data_msg.data(), data_msg.size());
+        command_cache.insert(std::make_pair(key, (void*) data));
+        cmd_data = (gl_glEnable_t *)data_msg.data();
+      }
+      if (hit) {
+					std::cout << "hit!! key: " << key <<" data: " << cmd_data->cap <<" data size:" << data_msg.size() << std::endl;
+				} else {
+					std::cout << "missed!! key: " << key  <<" data: " << cmd_data->cap << " data size:" << data_msg.size() << std::endl;
+				}
       glEnable(cmd_data->cap);
 
       break;
@@ -1332,7 +1350,7 @@ void Server::run() {
         numOfFrames = 0;
         lastTime = currentTime;
       }
-
+      std::cout << "----------------------------" << std::endl;
       glfwSwapBuffers(window);
       glfwPollEvents();
 
@@ -1357,6 +1375,7 @@ void Server::run() {
           std::cout << ex.what() << std::endl;
         }
       }
+      seq_cmd = 0;
       hasReturn = true;
       break;
     }
@@ -1365,7 +1384,7 @@ void Server::run() {
     }
     if(hasReturn)
       sock.send(ret, zmq::send_flags::none);
-
+    seq_cmd++;
     // usleep(0.001);
   }
 }

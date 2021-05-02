@@ -4,6 +4,9 @@
 int Server::framebufferHeight = 0;
 int Server::framebufferWidth = 0;
 int shader_compiled = 0;
+
+unsigned int total_data_size = 0;
+
 static void errorCallback(int errorCode, const char *errorDescription)
 
 {
@@ -55,9 +58,11 @@ Server::insert_or_check_cache(std::map<cache_key, std::string> &cache,
   if (cache_data.empty()){
     if (!res.second){
         cached = true;
+        // total_data_size += res.first->second.size();
         return res.first->second;        
     }
   }
+  total_data_size += cache_data.size();
   return cache_data;
 }
 void Server::server_bind() {
@@ -137,6 +142,7 @@ void Server::run() {
     bool hasReturn = false;
 
     auto res = sock.recv(msg, zmq::recv_flags::none);
+    total_data_size += msg.size();
 
     gl_command_t *c = (gl_command_t *)msg.data();
     cache_key key = cache_key_gen((unsigned char)c->cmd, sequence_number);
@@ -1625,14 +1631,36 @@ void Server::run() {
       glCullFace(cmd_data->mode);
       break;
     }
+    case (unsigned char)GL_Server_Command::GLSC_glUniform1iv:{
+      // recv data
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform1iv_t *cmd_data = (gl_glUniform1iv_t *)data.data();
+      // more data cache check
+      zmq::message_t more_data;
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
+        glUniform1iv(cmd_data->location, cmd_data->count, (GLint *)buffer_data.data());
+      } else {
+        glUniform1iv(cmd_data->location, cmd_data->count, NULL);
+      }
+
+      break;
+    }
+    
     case (unsigned char)GL_Server_Command::GLSC_bufferSwap: {
       double currentTime = glfwGetTime();
       numOfFrames++;
       if (currentTime - lastTime >= 1.0) {
 
-        printf("%f ms/frame  %d fps \n", 1000.0 / double(numOfFrames),
-               numOfFrames);
+        printf("%f ms/frame  %d fps %d bytes\n", 1000.0 / double(numOfFrames),
+               numOfFrames, total_data_size);
         numOfFrames = 0;
+        total_data_size = 0;
         lastTime = currentTime;
       }
       glfwSwapBuffers(window);

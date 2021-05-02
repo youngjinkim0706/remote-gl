@@ -1675,21 +1675,21 @@ void Server::run() {
         glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
                      pixel_data);
         auto end = std::chrono::steady_clock::now();
-        std::cout << "glReadPixels: "
-                  << std::chrono::duration_cast<std::chrono::microseconds>(
-                         end - start)
-                         .count()
-                  << std::endl;
+        // std::cout << "glReadPixels: "
+        //           << std::chrono::duration_cast<std::chrono::microseconds>(
+        //                  end - start)
+        //                  .count()
+        //           << std::endl;
 
         try {
           auto start = std::chrono::steady_clock::now();
           mq.get()->send(pixel_data, WIDTH * HEIGHT * 4, 0);
           auto end = std::chrono::steady_clock::now();
-          std::cout << "send data to mq: "
-                    << std::chrono::duration_cast<std::chrono::microseconds>(
-                           end - start)
-                           .count()
-                    << std::endl;
+          // std::cout << "send data to mq: "
+          //           << std::chrono::duration_cast<std::chrono::microseconds>(
+          //                  end - start)
+          //                  .count()
+          //           << std::endl;
 
         } catch (boost::interprocess::interprocess_exception &ex) {
           std::cout << ex.what() << std::endl;

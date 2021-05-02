@@ -22,8 +22,8 @@
 #include "gl_commands.h"
 
 #define BUFFER_SIZE 1024
-#define WIDTH 480
-#define HEIGHT 720
+#define WIDTH 1024
+#define HEIGHT 768
 #define FIFO_NAME "splab_stream"
 typedef unsigned long cache_key;
 

@@ -46,21 +46,20 @@ std::string Server::alloc_cached_data(zmq::message_t &data_msg) {
 }
 
 std::string
-Server::insert_or_check_cache(std::map<cache_key, std::string> cache,
+Server::insert_or_check_cache(std::map<cache_key, std::string> &cache,
                               cache_key key, zmq::message_t &data_msg) {
   bool cached = false;
   std::string cache_data = alloc_cached_data(data_msg);
   auto res = cache.insert(std::make_pair(key, cache_data));
-
-  // true : missed, false : hit
-  if (!res.second) {
-    cached = true;
-    return res.first->second;
-  } else {
-    return cache_data;
+  
+  if (cache_data.empty()){
+    if (!res.second){
+        cached = true;
+        return res.first->second;        
+    }
   }
+  return cache_data;
 }
-
 void Server::server_bind() {
   sock = zmq::socket_t(ctx, zmq::socket_type::pair);
 
@@ -141,7 +140,6 @@ void Server::run() {
 
     gl_command_t *c = (gl_command_t *)msg.data();
     cache_key key = cache_key_gen((unsigned char)c->cmd, sequence_number);
-
     switch (c->cmd) {
     case (unsigned char)GL_Server_Command::GLSC_glClear: {
       // recv data
@@ -188,10 +186,16 @@ void Server::run() {
       break;
     }
     case (unsigned char)GL_Server_Command::GLSC_glEnd: {
+      // recv data
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
       glEnd();
       break;
     }
     case (unsigned char)GL_Server_Command::GLSC_glFlush: {
+      // recv data
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
       glFlush();
       break;
     }
@@ -389,9 +393,6 @@ void Server::run() {
       // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      // check cache
-      std::string data = insert_or_check_cache(data_cache, key, data_msg);
-      gl_glCreateProgram_t *cmd_data = (gl_glCreateProgram_t *)data.data();
       GLuint program = glCreateProgram();
 
       hasReturn = true;
@@ -451,7 +452,7 @@ void Server::run() {
       res = sock.recv(more_data, zmq::recv_flags::none); 
       std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (buffer_data.size() > 0) {
+      if (!buffer_data.empty()) {
         glTexImage3D(cmd_data->target, cmd_data->level,
                      cmd_data->internalformat, cmd_data->width,
                      cmd_data->height, cmd_data->depth, cmd_data->border,
@@ -558,9 +559,6 @@ void Server::run() {
       // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      // check cache
-      std::string data = insert_or_check_cache(data_cache, key, data_msg);
-      gl_glGetError_t *cmd_data = (gl_glGetError_t *)data.data();
       GLenum error = glGetError();
 
       hasReturn = true;
@@ -652,6 +650,7 @@ void Server::run() {
       std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glRenderbufferStorage_t *cmd_data =
           (gl_glRenderbufferStorage_t *)data.data();
+
       glRenderbufferStorage(cmd_data->target, cmd_data->internalformat,
                             cmd_data->width, cmd_data->height);
 
@@ -1414,10 +1413,9 @@ void Server::run() {
       // check cache
       std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data.data();
-      
       GLuint texture =
           (GLuint)glGenTextures_idx_map.find(cmd_data->texture)->second;
-      
+
       glBindTexture(cmd_data->target, texture);
 
       break;
@@ -1480,6 +1478,7 @@ void Server::run() {
       std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glViewport_t *cmd_data = (gl_glViewport_t *)data.data();
       glViewport(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
+
       break;
     }
     case (unsigned char)GL_Server_Command::GLSC_glScissor: {
@@ -1590,10 +1589,6 @@ void Server::run() {
       // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      // check cache
-      std::string data = insert_or_check_cache(data_cache, key, data_msg);
-      gl_glEndTransformFeedback_t *cmd_data =
-          (gl_glEndTransformFeedback_t *)data.data();
       glEndTransformFeedback();
       break;
     }
@@ -1640,7 +1635,6 @@ void Server::run() {
         numOfFrames = 0;
         lastTime = currentTime;
       }
-      std::cout << "----------------------------" << std::endl;
       glfwSwapBuffers(window);
       glfwPollEvents();
 
@@ -1683,7 +1677,5 @@ void Server::run() {
     if (hasReturn)
       sock.send(ret, zmq::send_flags::none);
     sequence_number++;
-    std::cout << std::bitset<8>(c->cmd) << std::endl;
-
   }
 }

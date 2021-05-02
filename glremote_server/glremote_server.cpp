@@ -22,6 +22,44 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
     exit(-1);
   }
 }
+cache_key Server::cache_key_gen(unsigned char cmd, int sequence_number) {
+  std::bitset<32> cmd_bit(cmd);
+  std::bitset<32> seq_bit(sequence_number);
+  cmd_bit <<= 24;
+  return (cmd_bit |= seq_bit).to_ulong();
+}
+
+std::string Server::get_value_from_request(zmq::message_t &msg) {
+  std::string value;
+  value.resize(msg.size());
+  memcpy((void *)value.data(), msg.data(), msg.size());
+  return value;
+}
+
+std::string Server::alloc_cached_data(zmq::message_t &data_msg) {
+  std::string cache_data;
+  if(!data_msg.empty()){
+    cache_data.resize(data_msg.size());
+    memcpy((void *)cache_data.data(), data_msg.data(), data_msg.size());
+  }
+  return cache_data;
+}
+
+std::string
+Server::insert_or_check_cache(std::map<cache_key, std::string> cache,
+                              cache_key key, zmq::message_t &data_msg) {
+  bool cached = false;
+  std::string cache_data = alloc_cached_data(data_msg);
+  auto res = cache.insert(std::make_pair(key, cache_data));
+
+  // true : missed, false : hit
+  if (!res.second) {
+    cached = true;
+    return res.first->second;
+  } else {
+    return cache_data;
+  }
+}
 
 void Server::server_bind() {
   sock = zmq::socket_t(ctx, zmq::socket_type::pair);
@@ -91,7 +129,7 @@ void Server::run() {
   double lastTime = glfwGetTime();
   int numOfFrames = 0;
   int count = 0;
-  seq_cmd = 0;
+  sequence_number = 0;
 
   while (!quit) {
     // waiting until data comes here
@@ -100,76 +138,83 @@ void Server::run() {
     bool hasReturn = false;
 
     auto res = sock.recv(msg, zmq::recv_flags::none);
-    
+
     gl_command_t *c = (gl_command_t *)msg.data();
+    cache_key key = cache_key_gen((unsigned char)c->cmd, sequence_number);
 
     switch (c->cmd) {
-    case GLSC_glClear: {
+    case (unsigned char)GL_Server_Command::GLSC_glClear: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glClear_t *cmd_data = (gl_glClear_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glClear_t *cmd_data = (gl_glClear_t *)data.data();      
       glClear(cmd_data->mask);
 
       break;
     }
-    case GLSC_glBegin: {
+    case (unsigned char)GL_Server_Command::GLSC_glBegin: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glBegin_t *cmd_data = (gl_glBegin_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);      
+      gl_glBegin_t *cmd_data = (gl_glBegin_t *)data.data();
       glBegin(cmd_data->mode);
 
       break;
     }
-    case GLSC_glColor3f: {
+    case (unsigned char)GL_Server_Command::GLSC_glColor3f: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glColor3f_t *cmd_data = (gl_glColor3f_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glColor3f_t *cmd_data = (gl_glColor3f_t *)data.data();
       glColor3f(cmd_data->red, cmd_data->green, cmd_data->blue);
 
       break;
     }
-
-    case GLSC_glVertex3f: {
+    case (unsigned char)GL_Server_Command::GLSC_glVertex3f: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glVertex3f_t *cmd_data = (gl_glVertex3f_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glVertex3f_t *cmd_data = (gl_glVertex3f_t *)data.data();
       glVertex3f(cmd_data->x, cmd_data->y, cmd_data->z);
 
       break;
     }
-    case GLSC_glEnd: {
-      zmq::message_t data_msg;
-      auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glEnd_t *cmd_data = (gl_glEnd_t *)data_msg.data();
+    case (unsigned char)GL_Server_Command::GLSC_glEnd: {
       glEnd();
-
       break;
     }
-    case GLSC_glFlush: {
-      zmq::message_t data_msg;
-      auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glFlush_t *cmd_data = (gl_glFlush_t *)data_msg.data();
+    case (unsigned char)GL_Server_Command::GLSC_glFlush: {
       glFlush();
-
       break;
     }
-    case GLSC_glCreateShader: {
+    case (unsigned char)GL_Server_Command::GLSC_glCreateShader: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glCreateShader_t *cmd_data = (gl_glCreateShader_t *)data_msg.data();
-      unsigned int shader = glCreateShader(cmd_data->type);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glCreateShader_t *cmd_data = (gl_glCreateShader_t *)data.data();
+      GLuint shader = glCreateShader(cmd_data->type);
 
       hasReturn = true;
-      ret.rebuild(sizeof(unsigned int));
-      memcpy(ret.data(), &shader, sizeof(unsigned int));
+      ret.rebuild(sizeof(GLuint));
+      memcpy(ret.data(), &shader, sizeof(GLuint));
 
       break;
     }
-
-    case GLSC_glShaderSource: {
+    case (unsigned char)GL_Server_Command::GLSC_glShaderSource: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
+      
       gl_glShaderSource_t *cmd_data = (gl_glShaderSource_t *)data_msg.data();
       std::vector<const char *> strings;
       for (int i = 0; i < cmd_data->count; i++) {
@@ -188,14 +233,15 @@ void Server::run() {
           strings.push_back("\n");
         }
       }
-
       glShaderSource(cmd_data->shader, cmd_data->count, &strings[0], NULL);
+      
       break;
     }
-    case GLSC_glTransformFeedbackVaryings: {
+    case (unsigned char)GL_Server_Command::GLSC_glTransformFeedbackVaryings: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
+      
       gl_glTransformFeedbackVaryings_t *cmd_data =
           (gl_glTransformFeedbackVaryings_t *)data_msg.data();
       std::vector<const char *> strings;
@@ -215,25 +261,33 @@ void Server::run() {
           strings.push_back("\n");
         }
       }
-
       glTransformFeedbackVaryings(cmd_data->program, cmd_data->count,
                                   &strings[0], cmd_data->bufferMode);
+      
       break;
     }
-    case GLSC_glCompileShader: {
+    case (unsigned char)GL_Server_Command::GLSC_glCompileShader: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glCompileShader_t *cmd_data = (gl_glCompileShader_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glCompileShader_t *cmd_data = (gl_glCompileShader_t *)data.data();
       glCompileShader(cmd_data->shader);
 
       break;
     }
-    case GLSC_glGetShaderiv: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetShaderiv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetShaderiv_t *cmd_data = (gl_glGetShaderiv_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetShaderiv_t *cmd_data = (gl_glGetShaderiv_t *)data.data();
+      
       int result;
       glGetShaderiv(cmd_data->shader, cmd_data->pname, &result);
+      
       shader_compiled++;
       if (!result) {
         GLchar errorLog[512];
@@ -248,12 +302,15 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glReadPixels: {
+    case (unsigned char)GL_Server_Command::GLSC_glReadPixels: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glReadPixels_t *cmd_data = (gl_glReadPixels_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glReadPixels_t *cmd_data = (gl_glReadPixels_t *)data.data();
+      
       int size = 0;
-
       switch (cmd_data->type) {
       case GL_UNSIGNED_BYTE: {
         if (cmd_data->format == GL_RGBA) {
@@ -278,102 +335,127 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glBlendFuncSeparate: {
+    case (unsigned char)GL_Server_Command::GLSC_glBlendFuncSeparate: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBlendFuncSeparate_t *cmd_data =
-          (gl_glBlendFuncSeparate_t *)data_msg.data();
+          (gl_glBlendFuncSeparate_t *)data.data();
       glBlendFuncSeparate(cmd_data->sfactorRGB, cmd_data->dfactorRGB,
                           cmd_data->sfactorAlpha, cmd_data->dfactorAlpha);
 
       break;
     }
-      case GLSC_glBlendFunc:
-        {
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
-            gl_glBlendFunc_t *cmd_data = (gl_glBlendFunc_t *)data_msg.data();
-            glBlendFunc(cmd_data->sfactor, cmd_data->dfactor);
-
-            break;
-        }
-        case GLSC_glVertexAttrib4f:
-        {
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
-            gl_glVertexAttrib4f_t *cmd_data = (gl_glVertexAttrib4f_t *)data_msg.data();
-            glVertexAttrib4f(cmd_data->index, cmd_data->x,cmd_data->y,cmd_data->z,cmd_data->w);
-
-            break;
-        }
-    case GLSC_glDisableVertexAttribArray: {
+    case (unsigned char)GL_Server_Command::GLSC_glBlendFunc: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBlendFunc_t *cmd_data = (gl_glBlendFunc_t *)data.data();
+      glBlendFunc(cmd_data->sfactor, cmd_data->dfactor);
+
+      break;
+    }
+    case (unsigned char)GL_Server_Command::GLSC_glVertexAttrib4f: {
+      // recv data
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glVertexAttrib4f_t *cmd_data = (gl_glVertexAttrib4f_t *)data.data();
+
+      glVertexAttrib4f(cmd_data->index, cmd_data->x, cmd_data->y, cmd_data->z,
+                       cmd_data->w);
+
+      break;
+    }
+    case (unsigned char)GL_Server_Command::GLSC_glDisableVertexAttribArray: {
+      // recv data
+      zmq::message_t data_msg;
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glDisableVertexAttribArray_t *cmd_data =
-          (gl_glDisableVertexAttribArray_t *)data_msg.data();
+          (gl_glDisableVertexAttribArray_t *)data.data();
       glDisableVertexAttribArray(cmd_data->index);
 
       break;
     }
 
-    case GLSC_glCreateProgram: {
+    case (unsigned char)GL_Server_Command::GLSC_glCreateProgram: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glCreateProgram_t *cmd_data = (gl_glCreateProgram_t *)data_msg.data();
-      unsigned int program = glCreateProgram();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glCreateProgram_t *cmd_data = (gl_glCreateProgram_t *)data.data();
+      GLuint program = glCreateProgram();
 
       hasReturn = true;
-      ret.rebuild(sizeof(unsigned int));
-      memcpy(ret.data(), &program, sizeof(unsigned int));
+      ret.rebuild(sizeof(GLuint));
+      memcpy(ret.data(), &program, sizeof(GLuint));
 
       break;
     }
-    case GLSC_glCheckFramebufferStatus: {
+    case (unsigned char)GL_Server_Command::GLSC_glCheckFramebufferStatus: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glCheckFramebufferStatus_t *cmd_data =
-          (gl_glCheckFramebufferStatus_t *)data_msg.data();
-      unsigned int status = glCheckFramebufferStatus(cmd_data->target);
+          (gl_glCheckFramebufferStatus_t *)data.data();
+      GLenum status = glCheckFramebufferStatus(cmd_data->target);
 
       hasReturn = true;
-      ret.rebuild(sizeof(unsigned int));
-      memcpy(ret.data(), &status, sizeof(unsigned int));
+      ret.rebuild(sizeof(GLenum));
+      memcpy(ret.data(), &status, sizeof(GLenum));
 
       break;
     }
-    case GLSC_glAttachShader: {
+    case (unsigned char)GL_Server_Command::GLSC_glAttachShader: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glAttachShader_t *cmd_data = (gl_glAttachShader_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glAttachShader_t *cmd_data = (gl_glAttachShader_t *)data.data();
       glAttachShader(cmd_data->program, cmd_data->shader);
 
       break;
     }
 
-    case GLSC_glDisable: {
+    case (unsigned char)GL_Server_Command::GLSC_glDisable: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glDisable_t *cmd_data = (gl_glDisable_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDisable_t *cmd_data = (gl_glDisable_t *)data.data();
       glDisable(cmd_data->cap);
 
       break;
     }
-    case GLSC_glTexImage3D: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexImage3D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glTexImage3D_t *cmd_data = (gl_glTexImage3D_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexImage3D_t *cmd_data = (gl_glTexImage3D_t *)data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (!more_data.empty()) {
-        const void *buffer_data = malloc(more_data.size());
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+      if (buffer_data.size() > 0) {
         glTexImage3D(cmd_data->target, cmd_data->level,
                      cmd_data->internalformat, cmd_data->width,
                      cmd_data->height, cmd_data->depth, cmd_data->border,
-                     cmd_data->format, cmd_data->type, buffer_data);
+                     cmd_data->format, cmd_data->type, buffer_data.data());
       } else {
         glTexImage3D(cmd_data->target, cmd_data->level,
                      cmd_data->internalformat, cmd_data->width,
@@ -382,79 +464,83 @@ void Server::run() {
       }
       break;
     }
-    case GLSC_glGenerateMipmap: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenerateMipmap: {
+      // recv data
       zmq::message_t data_msg;
-      auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGenerateMipmap_t *cmd_data =
-          (gl_glGenerateMipmap_t *)data_msg.data();
+      auto res = sock.recv(data_msg, zmq::recv_flags::none);      
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)data.data();
       glGenerateMipmap(cmd_data->target);
 
       break;
     }
-    case GLSC_glFrontFace: {
+    case (unsigned char)GL_Server_Command::GLSC_glFrontFace: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data.data();
       glFrontFace(cmd_data->mode);
 
       break;
     }
-    case GLSC_glDepthMask: {
+    case (unsigned char)GL_Server_Command::GLSC_glDepthMask: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glDepthMask_t *cmd_data = (gl_glDepthMask_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDepthMask_t *cmd_data = (gl_glDepthMask_t *)data.data();
       glDepthMask(cmd_data->flag);
 
       break;
     }
-    case GLSC_glBlendEquation: {
+    case (unsigned char)GL_Server_Command::GLSC_glBlendEquation: {
+      // recv data
       zmq::message_t data_msg;
-
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glBlendEquation_t *cmd_data = (gl_glBlendEquation_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBlendEquation_t *cmd_data = (gl_glBlendEquation_t *)data.data();
       glBlendEquation(cmd_data->mode);
 
       break;
     }
-    case GLSC_glEnable: {
+    case (unsigned char)GL_Server_Command::GLSC_glEnable: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glEnable_t *cmd_data;
-      std::string key = std::to_string(c->cmd) + "_" + std::to_string(seq_cmd);
-      bool hit = false;
-      if(data_msg.empty()){
-          hit = true;
-          cmd_data = (gl_glEnable_t *)command_cache.find(key)->second;
-      }else{
-        char* data = new char[data_msg.size()];
-        memcpy((void*)data, data_msg.data(), data_msg.size());
-        command_cache.insert(std::make_pair(key, (void*) data));
-        cmd_data = (gl_glEnable_t *)data_msg.data();
-      }
-      if (hit) {
-					std::cout << "hit!! key: " << key <<" data: " << cmd_data->cap <<" data size:" << data_msg.size() << std::endl;
-				} else {
-					std::cout << "missed!! key: " << key  <<" data: " << cmd_data->cap << " data size:" << data_msg.size() << std::endl;
-				}
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glEnable_t *cmd_data = (gl_glEnable_t *)data.data();
       glEnable(cmd_data->cap);
 
       break;
     }
-    case GLSC_glLinkProgram: {
+    case (unsigned char)GL_Server_Command::GLSC_glLinkProgram: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glLinkProgram_t *cmd_data = (gl_glLinkProgram_t *)data_msg.data();
-      //
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glLinkProgram_t *cmd_data = (gl_glLinkProgram_t *)data.data();
       glLinkProgram(cmd_data->program);
+
       break;
     }
-    case GLSC_glGetProgramiv: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetProgramiv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetProgramiv_t *cmd_data = (gl_glGetProgramiv_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetProgramiv_t *cmd_data = (gl_glGetProgramiv_t *)data.data();
+      
       int result;
       glGetProgramiv(cmd_data->program, cmd_data->pname, &result);
+      
       if (!result) {
         GLchar errorLog[512];
         glGetShaderInfoLog(cmd_data->program, 512, NULL, errorLog);
@@ -468,111 +554,140 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glGetError: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetError: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetError_t *cmd_data = (gl_glGetError_t *)data_msg.data();
-      unsigned int error = glGetError();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetError_t *cmd_data = (gl_glGetError_t *)data.data();
+      GLenum error = glGetError();
 
       hasReturn = true;
-      ret.rebuild(sizeof(unsigned int));
-      memcpy(ret.data(), &error, sizeof(unsigned int));
+      ret.rebuild(sizeof(GLenum));
+      memcpy(ret.data(), &error, sizeof(GLenum));
 
       break;
     }
-    case GLSC_glTexStorage2D: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexStorage2D: {
+       // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glTexStorage2D_t *cmd_data = (gl_glTexStorage2D_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexStorage2D_t *cmd_data = (gl_glTexStorage2D_t *)data.data();
       glTexStorage2D(cmd_data->target, cmd_data->levels,
                      cmd_data->internalformat, cmd_data->width,
                      cmd_data->height);
 
       break;
     }
-    case GLSC_glTexParameteri: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexParameteri: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glTexParameteri_t *cmd_data = (gl_glTexParameteri_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexParameteri_t *cmd_data = (gl_glTexParameteri_t *)data.data();
       glTexParameteri(cmd_data->target, cmd_data->pname, cmd_data->param);
 
       break;
     }
-    case GLSC_glGenBuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenBuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGenBuffers_t *cmd_data = (gl_glGenBuffers_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGenBuffers_t *cmd_data = (gl_glGenBuffers_t *)data.data();
       GLuint *result = new GLuint[cmd_data->n];
       glGenBuffers(cmd_data->n, result);
 
-      for (int i=0; i<cmd_data->n ; i++){
-        glGenBuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      for (int i = 0; i < cmd_data->n; i++) {
+        glGenBuffers_idx_map.insert(std::make_pair(
+            cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
       }
 
       break;
     }
-    case GLSC_glGenRenderbuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenRenderbuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGenRenderbuffers_t *cmd_data =
-          (gl_glGenRenderbuffers_t *)data_msg.data();
+          (gl_glGenRenderbuffers_t *)data.data();
       GLuint *result = new GLuint[cmd_data->n];
       glGenRenderbuffers(cmd_data->n, result);
 
-      for (int i=0; i<cmd_data->n ; i++){
-        glGenRenderbuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      for (int i = 0; i < cmd_data->n; i++) {
+        glGenRenderbuffers_idx_map.insert(std::make_pair(
+            cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
       }
 
       break;
     }
-    case GLSC_glBindRenderbuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindRenderbuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindRenderbuffer_t *cmd_data =
-          (gl_glBindRenderbuffer_t *)data_msg.data();
-      GLuint buffer_id = (GLuint) glGenRenderbuffers_idx_map.find(cmd_data->renderbuffer)->second;
+          (gl_glBindRenderbuffer_t *)data.data();
+      GLuint buffer_id =
+          (GLuint)glGenRenderbuffers_idx_map.find(cmd_data->renderbuffer)
+              ->second;
 
       glBindRenderbuffer(cmd_data->target, buffer_id);
 
       break;
     }
-    case GLSC_glRenderbufferStorage: {
+    case (unsigned char)GL_Server_Command::GLSC_glRenderbufferStorage: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glRenderbufferStorage_t *cmd_data =
-          (gl_glRenderbufferStorage_t *)data_msg.data();
+          (gl_glRenderbufferStorage_t *)data.data();
       glRenderbufferStorage(cmd_data->target, cmd_data->internalformat,
                             cmd_data->width, cmd_data->height);
 
       break;
     }
-    case GLSC_glFramebufferRenderbuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glFramebufferRenderbuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glFramebufferRenderbuffer_t *cmd_data =
-          (gl_glFramebufferRenderbuffer_t *)data_msg.data();
+          (gl_glFramebufferRenderbuffer_t *)data.data();
       glFramebufferRenderbuffer(cmd_data->target, cmd_data->attachment,
                                 cmd_data->renderbuffertarget,
                                 cmd_data->renderbuffer);
 
       break;
     }
-    case GLSC_glTexSubImage3D: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexSubImage3D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (!more_data.empty()) {
-        const void *buffer_data = malloc(more_data.size());
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+      if (!buffer_data.empty()) {
         glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
                         cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
                         cmd_data->height, cmd_data->depth, cmd_data->format,
-                        cmd_data->type, buffer_data);
+                        cmd_data->type, buffer_data.data());
       } else {
         glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
                         cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
@@ -580,171 +695,215 @@ void Server::run() {
                         cmd_data->type, NULL);
       }
       break;
-
     }
-    case GLSC_glBindBuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindBuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glBindBuffer_t *cmd_data = (gl_glBindBuffer_t *)data_msg.data();
-      GLuint buffer_id = (GLuint) glGenBuffers_idx_map.find(cmd_data->id)->second;
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBindBuffer_t *cmd_data = (gl_glBindBuffer_t *)data.data();
+      GLuint buffer_id =
+          (GLuint)glGenBuffers_idx_map.find(cmd_data->id)->second;
       glBindBuffer(cmd_data->target, buffer_id);
 
       break;
     }
-    case GLSC_glBindFramebuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindFramebuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindFramebuffer_t *cmd_data =
-          (gl_glBindFramebuffer_t *)data_msg.data();
-      GLuint buffer_id = (GLuint) glGenFramebuffers_idx_map.find(cmd_data->framebuffer)->second;
+          (gl_glBindFramebuffer_t *)data.data();
+      GLuint buffer_id =
+          (GLuint)glGenFramebuffers_idx_map.find(cmd_data->framebuffer)->second;
 
       glBindFramebuffer(cmd_data->target, buffer_id);
 
       break;
     }
-    case GLSC_glBindBufferBase: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindBufferBase: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindBufferBase_t *cmd_data =
-          (gl_glBindBufferBase_t *)data_msg.data();
-      GLuint buffer_id = (GLuint) glGenBuffers_idx_map.find(cmd_data->buffer)->second;
+          (gl_glBindBufferBase_t *)data.data();
+      GLuint buffer_id =
+          (GLuint)glGenBuffers_idx_map.find(cmd_data->buffer)->second;
 
       glBindBufferBase(cmd_data->target, cmd_data->index, buffer_id);
+
       break;
     }
-    case GLSC_glDeleteTextures: {
+    case (unsigned char)GL_Server_Command::GLSC_glDeleteTextures: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glDeleteTextures_t *cmd_data =
-          (gl_glDeleteTextures_t *)data_msg.data();
-
-      GLuint texture;
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)data.data();
+     
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      memcpy(&texture, more_data.data(), sizeof(GLuint) * cmd_data->n);
-      glDeleteTextures(cmd_data->n, &texture);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+      glDeleteTextures(cmd_data->n, (GLuint*)buffer_data.data());
+
       break;
     }
-    case GLSC_glDeleteFramebuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glDeleteFramebuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glDeleteFramebuffers_t *cmd_data =
-          (gl_glDeleteFramebuffers_t *)data_msg.data();
-
-      GLuint framebuffer;
-
+          (gl_glDeleteFramebuffers_t *)data.data();
+      
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-
-      memcpy(&framebuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
-      glDeleteFramebuffers(cmd_data->n, &framebuffer);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+      glDeleteFramebuffers(cmd_data->n, (GLuint*) buffer_data.data());
+     
       break;
     }
-    case GLSC_glUniform1f: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniform1f: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glUniform1f_t *cmd_data = (gl_glUniform1f_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform1f_t *cmd_data = (gl_glUniform1f_t *)data.data();
       glUniform1f(cmd_data->location, cmd_data->v0);
 
       break;
     }
-    case GLSC_glFramebufferTextureLayer: {
+    case (unsigned char)GL_Server_Command::GLSC_glFramebufferTextureLayer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glFramebufferTextureLayer_t *cmd_data =
-          (gl_glFramebufferTextureLayer_t *)data_msg.data();
+          (gl_glFramebufferTextureLayer_t *)data.data();
       glFramebufferTextureLayer(cmd_data->target, cmd_data->attachment,
                                 cmd_data->texture, cmd_data->level,
                                 cmd_data->layer);
 
       break;
     }
-    case GLSC_glRenderbufferStorageMultisample: {
+    case (unsigned char)
+        GL_Server_Command::GLSC_glRenderbufferStorageMultisample: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glRenderbufferStorageMultisample_t *cmd_data =
-          (gl_glRenderbufferStorageMultisample_t *)data_msg.data();
+          (gl_glRenderbufferStorageMultisample_t *)data.data();
       glRenderbufferStorageMultisample(cmd_data->target, cmd_data->samples,
                                        cmd_data->internalformat,
                                        cmd_data->width, cmd_data->height);
 
       break;
     }
-    case GLSC_glDeleteRenderbuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glDeleteRenderbuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glDeleteRenderbuffers_t *cmd_data =
-          (gl_glDeleteRenderbuffers_t *)data_msg.data();
+          (gl_glDeleteRenderbuffers_t *)data.data();
 
-      GLuint renderbuffer;
-
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-
-      memcpy(&renderbuffer, more_data.data(), sizeof(GLuint) * cmd_data->n);
-      glDeleteRenderbuffers(cmd_data->n, &renderbuffer);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      glDeleteRenderbuffers(cmd_data->n, (GLuint*)buffer_data.data());
       break;
     }
-    case GLSC_glClearBufferfv: {
+    case (unsigned char)GL_Server_Command::GLSC_glClearBufferfv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glClearBufferfv_t *cmd_data = (gl_glClearBufferfv_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glClearBufferfv_t *cmd_data = (gl_glClearBufferfv_t *)data.data();
 
-      GLfloat *buffer_data = new GLfloat[4];
-
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-
-      memcpy(buffer_data, more_data.data(), sizeof(GLfloat) * 4);
-      glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer, (GLfloat*) buffer_data.data());
       break;
     }
-    case GLSC_glDepthFunc: {
+    case (unsigned char)GL_Server_Command::GLSC_glDepthFunc: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glDepthFunc_t *cmd_data = (gl_glDepthFunc_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDepthFunc_t *cmd_data = (gl_glDepthFunc_t *)data.data();
       glDepthFunc(cmd_data->func);
       break;
     }
-    case GLSC_glColorMask: {
+    case (unsigned char)GL_Server_Command::GLSC_glColorMask: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glColorMask_t *cmd_data = (gl_glColorMask_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glColorMask_t *cmd_data = (gl_glColorMask_t *)data.data();
       glColorMask(cmd_data->red, cmd_data->green, cmd_data->blue,
                   cmd_data->alpha);
       break;
     }
-    case GLSC_glClearDepthf: {
+    case (unsigned char)GL_Server_Command::GLSC_glClearDepthf: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glClearDepthf_t *cmd_data = (gl_glClearDepthf_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glClearDepthf_t *cmd_data = (gl_glClearDepthf_t *)data.data();
       glClearDepth(cmd_data->d);
       break;
     }
-    case GLSC_glFramebufferTexture2D: {
+    case (unsigned char)GL_Server_Command::GLSC_glFramebufferTexture2D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glFramebufferTexture2D_t *cmd_data =
-          (gl_glFramebufferTexture2D_t *)data_msg.data();
+          (gl_glFramebufferTexture2D_t *)data.data();
       glFramebufferTexture2D(cmd_data->target, cmd_data->attachment,
                              cmd_data->textarget, cmd_data->texture,
                              cmd_data->level);
 
       break;
     }
-    case GLSC_glBufferData: {
+    case (unsigned char)GL_Server_Command::GLSC_glBufferData: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glBufferData_t *cmd_data = (gl_glBufferData_t *)data_msg.data();
-      void *buffer_data = malloc(cmd_data->size);
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBufferData_t* cmd_data = (gl_glBufferData_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), cmd_data->size);
-        glBufferData(cmd_data->target, cmd_data->size, buffer_data,
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
+        glBufferData(cmd_data->target, cmd_data->size, buffer_data.data(),
                      cmd_data->usage);
       } else {
         glBufferData(cmd_data->target, cmd_data->size, NULL, cmd_data->usage);
@@ -752,20 +911,21 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glBufferSubData: {
+    case (unsigned char)GL_Server_Command::GLSC_glBufferSubData: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glBufferSubData_t *cmd_data = (gl_glBufferSubData_t *)data_msg.data();
-      void *buffer_data = malloc(cmd_data->size);
-      // float buffer_data[9];
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBufferSubData_t *cmd_data = (gl_glBufferSubData_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), cmd_data->size);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
         glBufferSubData(cmd_data->target, cmd_data->offset, cmd_data->size,
-                        buffer_data);
+                        buffer_data.data());
       } else {
         glBufferSubData(cmd_data->target, cmd_data->offset, cmd_data->size,
                         NULL);
@@ -773,123 +933,138 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glUniform4fv: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniform4fv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glUniform4fv_t *cmd_data = (gl_glUniform4fv_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform4fv_t *cmd_data = (gl_glUniform4fv_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLfloat *buffer_data = new GLfloat[4 * cmd_data->count];
-
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
-        glUniform4fv(cmd_data->location, cmd_data->count, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
+        glUniform4fv(cmd_data->location, cmd_data->count, (GLfloat *)buffer_data.data());
       } else {
         glUniform4fv(cmd_data->location, cmd_data->count, NULL);
       }
 
       break;
     }
-    case GLSC_glUniform1i: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniform1i: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data.data();
       glUniform1i(cmd_data->location, cmd_data->v0);
 
       break;
     }
-    case GLSC_glUniformBlockBinding: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniformBlockBinding: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glUniformBlockBinding_t *cmd_data =
-          (gl_glUniformBlockBinding_t *)data_msg.data();
+          (gl_glUniformBlockBinding_t *)data.data();
       glUniformBlockBinding(cmd_data->program, cmd_data->uniformBlockIndex,
                             cmd_data->uniformBlockBinding);
 
       break;
     }
-    case GLSC_glPixelStorei: {
+    case (unsigned char)GL_Server_Command::GLSC_glPixelStorei: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glPixelStorei_t *cmd_data = (gl_glPixelStorei_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glPixelStorei_t *cmd_data = (gl_glPixelStorei_t *)data.data();
       glPixelStorei(cmd_data->pname, cmd_data->param);
 
       break;
     }
-    case GLSC_glTexParameterf: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexParameterf: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glTexParameterf_t *cmd_data = (gl_glTexParameterf_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexParameterf_t *cmd_data = (gl_glTexParameterf_t *)data.data();
       glTexParameterf(cmd_data->target, cmd_data->pname, cmd_data->param);
 
       break;
     }
-    case GLSC_glVertexAttrib4fv: {
+    case (unsigned char)GL_Server_Command::GLSC_glVertexAttrib4fv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glVertexAttrib4fv_t *cmd_data =
-          (gl_glVertexAttrib4fv_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glVertexAttrib4fv_t *cmd_data = (gl_glVertexAttrib4fv_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLfloat *buffer_data = new GLfloat[4];
-
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
-        glVertexAttrib4fv(cmd_data->index, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
+        glVertexAttrib4fv(cmd_data->index, (GLfloat *)buffer_data.data());
       } else {
         glVertexAttrib4fv(cmd_data->index, NULL);
       }
 
       break;
     }
-    case GLSC_glDrawElements: {
+    case (unsigned char)GL_Server_Command::GLSC_glDrawElements: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glDrawElements_t *cmd_data = (gl_glDrawElements_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDrawElements_t *cmd_data = (gl_glDrawElements_t *)data.data();
       glDrawElements(cmd_data->mode, cmd_data->count, cmd_data->type,
                      (void *)cmd_data->indices);
       break;
     }
-    case GLSC_glUniform2fv: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniform2fv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glUniform2fv_t *cmd_data = (gl_glUniform2fv_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform2fv_t *cmd_data = (gl_glUniform2fv_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLfloat *buffer_data = new GLfloat[2 * cmd_data->count];
-
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
-        glUniform2fv(cmd_data->location, cmd_data->count, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
+        glUniform2fv(cmd_data->location, cmd_data->count, (GLfloat *)buffer_data.data());
       } else {
         glUniform2fv(cmd_data->location, cmd_data->count, NULL);
       }
 
       break;
     }
-    case GLSC_glUniformMatrix4fv: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniformMatrix4fv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glUniformMatrix4fv_t *cmd_data =
-          (gl_glUniformMatrix4fv_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniformMatrix4fv_t* cmd_data = (gl_glUniformMatrix4fv_t *) data.data();
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLfloat *buffer_data = new GLfloat[16 * cmd_data->count];
-
-      if (!more_data.empty()) {
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+     
+      if (!buffer_data.empty()) {
         glUniformMatrix4fv(cmd_data->location, cmd_data->count,
-                           cmd_data->transpose, buffer_data);
+                           cmd_data->transpose, (GLfloat *)buffer_data.data());
       } else {
         glUniformMatrix4fv(cmd_data->location, cmd_data->count,
                            cmd_data->transpose, NULL);
@@ -897,80 +1072,93 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glGenVertexArrays: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenVertexArrays: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGenVertexArrays_t *cmd_data =
-          (gl_glGenVertexArrays_t *)data_msg.data();
+          (gl_glGenVertexArrays_t *)data.data();
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenVertexArrays(cmd_data->n, result);
 
-      for (int i=0; i<cmd_data->n ; i++){
-        glGenVertexArrays_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+      for (int i = 0; i < cmd_data->n; i++) {
+        glGenVertexArrays_idx_map.insert(std::make_pair(
+            cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
       }
 
       break;
     }
-    case GLSC_glDrawBuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glDrawBuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDrawBuffers_t *cmd_data = (gl_glDrawBuffers_t *)data.data();
 
-      gl_glDrawBuffers_t *cmd_data = (gl_glDrawBuffers_t *)data_msg.data();
-
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLenum *buffer_data = new GLenum[cmd_data->n];
-
-      memcpy((void *)buffer_data, more_data.data(), more_data.size());
-      glDrawBuffers(cmd_data->n, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+      glDrawBuffers(cmd_data->n, (GLenum *)buffer_data.data());
 
       break;
     }
-    case GLSC_glDeleteVertexArrays: {
+    case (unsigned char)GL_Server_Command::GLSC_glDeleteVertexArrays: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glDeleteVertexArrays_t *cmd_data =
-          (gl_glDeleteVertexArrays_t *)data_msg.data();
+          (gl_glDeleteVertexArrays_t *)data.data();
 
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLuint *buffer_data = new GLuint[cmd_data->n];
-
-      memcpy((void *)buffer_data, more_data.data(), more_data.size());
-      glDeleteVertexArrays(cmd_data->n, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+      glDeleteVertexArrays(cmd_data->n, (GLuint*)buffer_data.data());
 
       break;
     }
-    case GLSC_glDeleteBuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glDeleteBuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)data.data();
 
-      gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)data_msg.data();
-
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      GLuint *buffer_data = new GLuint[cmd_data->n];
-
-      memcpy((void *)buffer_data, more_data.data(), more_data.size());
-      glDeleteBuffers(cmd_data->n, buffer_data);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+      glDeleteBuffers(cmd_data->n, (GLuint*) buffer_data.data());
 
       break;
     }
-    case GLSC_glReadBuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glReadBuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glReadBuffer_t *cmd_data = (gl_glReadBuffer_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glReadBuffer_t *cmd_data = (gl_glReadBuffer_t *)data.data();
       glReadBuffer(cmd_data->src);
 
       break;
     }
-    case GLSC_glBlitFramebuffer: {
+    case (unsigned char)GL_Server_Command::GLSC_glBlitFramebuffer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBlitFramebuffer_t *cmd_data =
-          (gl_glBlitFramebuffer_t *)data_msg.data();
+          (gl_glBlitFramebuffer_t *)data.data();
       glBlitFramebuffer(cmd_data->srcX0, cmd_data->srcY0, cmd_data->srcX1,
                         cmd_data->srcY1, cmd_data->dstX0, cmd_data->dstY0,
                         cmd_data->dstX1, cmd_data->dstY1, cmd_data->mask,
@@ -978,64 +1166,82 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glBindVertexArray: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindVertexArray: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindVertexArray_t *cmd_data =
-          (gl_glBindVertexArray_t *)data_msg.data();
-      GLuint array = (GLuint) glGenVertexArrays_idx_map.find(cmd_data->array)->second;
+          (gl_glBindVertexArray_t *)data.data();
+      GLuint array =
+          (GLuint)glGenVertexArrays_idx_map.find(cmd_data->array)->second;
 
       glBindVertexArray(cmd_data->array);
 
       break;
     }
-    case GLSC_glGetAttribLocation: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetAttribLocation: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGetAttribLocation_t *cmd_data =
-          (gl_glGetAttribLocation_t *)data_msg.data();
+          (gl_glGetAttribLocation_t *)data.data();
 
-      char *buffer_data;
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
-      int positionAttr = glGetAttribLocation(cmd_data->programObj,
-                                             more_data.to_string().c_str());
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+
+      GLint positionAttr = glGetAttribLocation(cmd_data->programObj,
+                                             buffer_data.c_str());
 
       hasReturn = true;
-      ret.rebuild(sizeof(int));
-      memcpy(ret.data(), &positionAttr, sizeof(int));
+      ret.rebuild(sizeof(GLint));
+      memcpy(ret.data(), &positionAttr, sizeof(GLint));
 
       break;
     }
-    case GLSC_glBindAttribLocation: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindAttribLocation: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBindAttribLocation_t *cmd_data =
-          (gl_glBindAttribLocation_t *)data_msg.data();
+          (gl_glBindAttribLocation_t *)data.data();
 
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+
       glBindAttribLocation(cmd_data->program, cmd_data->index,
-                           more_data.to_string().c_str());
+                           buffer_data.c_str());
 
       break;
     }
-    case GLSC_glCompressedTexImage2D: {
+    case (unsigned char)GL_Server_Command::GLSC_glCompressedTexImage2D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glCompressedTexImage2D_t *cmd_data =
-          (gl_glCompressedTexImage2D_t *)data_msg.data();
+          (gl_glCompressedTexImage2D_t *)data.data();
 
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (!more_data.empty()) {
-        const void *buffer_data = malloc(more_data.size());
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+      if (!buffer_data.empty()) {
         glCompressedTexImage2D(cmd_data->target, cmd_data->level,
                                cmd_data->internalformat, cmd_data->width,
                                cmd_data->height, cmd_data->border,
-                               cmd_data->imageSize, buffer_data);
+                               cmd_data->imageSize, buffer_data.data());
       } else {
         glCompressedTexImage2D(cmd_data->target, cmd_data->level,
                                cmd_data->internalformat, cmd_data->width,
@@ -1044,16 +1250,22 @@ void Server::run() {
       }
       break;
     }
-    case GLSC_glGetUniformLocation: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetUniformLocation: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGetUniformLocation_t *cmd_data =
-          (gl_glGetUniformLocation_t *)data_msg.data();
+          (gl_glGetUniformLocation_t *)data.data();
 
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+
       GLint location = glGetUniformLocation(cmd_data->program,
-                                            more_data.to_string().c_str());
+                                            buffer_data.c_str());
 
       hasReturn = true;
       ret.rebuild(sizeof(GLint));
@@ -1061,16 +1273,22 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glGetUniformBlockIndex: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetUniformBlockIndex: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGetUniformBlockIndex_t *cmd_data =
-          (gl_glGetUniformBlockIndex_t *)data_msg.data();
+          (gl_glGetUniformBlockIndex_t *)data.data();
 
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
+
       GLint index = glGetUniformBlockIndex(cmd_data->program,
-                                           more_data.to_string().c_str());
+                                           buffer_data.c_str());
 
       hasReturn = true;
       ret.rebuild(sizeof(GLint));
@@ -1078,36 +1296,44 @@ void Server::run() {
 
       break;
     }
-    case GLSC_glGetStringi: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetStringi: {
+       // recv data
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetStringi_t *cmd_data = (gl_glGetStringi_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetStringi_t *cmd_data = (gl_glGetStringi_t *)data.data();
 
       const GLubyte *strings = glGetStringi(cmd_data->name, cmd_data->index);
-      std::string result;
 
+      std::string result;
       result.append(reinterpret_cast<const char *>(strings)); // new style
+      
       hasReturn = true;
       ret.rebuild(result.size());
       memcpy(ret.data(), result.data(), result.size());
 
       break;
     }
-    case GLSC_glTexSubImage2D: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexSubImage2D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexSubImage2D_t *cmd_data = (gl_glTexSubImage2D_t *)data.data();
 
-      gl_glTexSubImage2D_t *cmd_data = (gl_glTexSubImage2D_t *)data_msg.data();
-
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (!more_data.empty()) {
-        const void *buffer_data = malloc(more_data.size());
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+
+      if (!buffer_data.empty()) {
         glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
                         cmd_data->yoffset, cmd_data->width, cmd_data->height,
-                        cmd_data->format, cmd_data->type, buffer_data);
+                        cmd_data->format, cmd_data->type, buffer_data.data());
       } else {
         glTexSubImage2D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
                         cmd_data->yoffset, cmd_data->width, cmd_data->height,
@@ -1115,232 +1341,296 @@ void Server::run() {
       }
       break;
     }
-    case GLSC_glGetString: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetString: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetString_t *cmd_data = (gl_glGetString_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetString_t *cmd_data = (gl_glGetString_t *)data.data();
 
       const GLubyte *strings = glGetString(cmd_data->name);
-      std::string result;
 
+      std::string result;
       result.append(reinterpret_cast<const char *>(strings)); // new style
       hasReturn = true;
       ret.rebuild(result.size());
       memcpy(ret.data(), result.data(), result.size());
-      // const GLubyte *strings2 = reinterpret_cast<const GLubyte *>(ret);
 
-      // std::cout << result2 << std::endl;
       break;
     }
-    case GLSC_glVertexAttribPointer: {
+    case (unsigned char)GL_Server_Command::GLSC_glVertexAttribPointer: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glVertexAttribPointer_t *cmd_data =
-          (gl_glVertexAttribPointer_t *)data_msg.data();
+          (gl_glVertexAttribPointer_t *)data.data();
       glVertexAttribPointer(cmd_data->index, cmd_data->size, cmd_data->type,
                             cmd_data->normalized, cmd_data->stride,
                             (void *)cmd_data->pointer); // pointer add 0
 
       break;
     }
-    case GLSC_glEnableVertexAttribArray: {
+    case (unsigned char)GL_Server_Command::GLSC_glEnableVertexAttribArray: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glEnableVertexAttribArray_t *cmd_data =
-          (gl_glEnableVertexAttribArray_t *)data_msg.data();
+          (gl_glEnableVertexAttribArray_t *)data.data();
       glEnableVertexAttribArray(cmd_data->index);
 
       break;
     }
-    case GLSC_glUseProgram: {
+    case (unsigned char)GL_Server_Command::GLSC_glUseProgram: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glUseProgram_t *cmd_data = (gl_glUseProgram_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUseProgram_t *cmd_data = (gl_glUseProgram_t *)data.data();
       glUseProgram(cmd_data->program);
 
       break;
     }
-    case GLSC_glActiveTexture: {
+    case (unsigned char)GL_Server_Command::GLSC_glActiveTexture: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data.data();
       glActiveTexture(cmd_data->texture);
 
       break;
     }
-    case GLSC_glBindTexture: {
+    case (unsigned char)GL_Server_Command::GLSC_glBindTexture: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data_msg.data();
-      GLuint texture = (GLuint) glGenTextures_idx_map.find(cmd_data->texture)->second;
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data.data();
+      
+      GLuint texture =
+          (GLuint)glGenTextures_idx_map.find(cmd_data->texture)->second;
+      
+      glBindTexture(cmd_data->target, texture);
 
-      glBindTexture(cmd_data->target, cmd_data->texture);
       break;
     }
-    case GLSC_glTexImage2D: {
+    case (unsigned char)GL_Server_Command::GLSC_glTexImage2D: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-
-      gl_glTexImage2D_t *cmd_data = (gl_glTexImage2D_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glTexImage2D_t *cmd_data = (gl_glTexImage2D_t *)data.data();
+     
+      // more data cache check
       zmq::message_t more_data;
-      res = sock.recv(more_data, zmq::recv_flags::none);
+      res = sock.recv(more_data, zmq::recv_flags::none); 
+      std::string buffer_data = insert_or_check_cache(more_data_cache, key, more_data);
 
-      if (!more_data.empty()) {
-        const void *buffer_data = malloc(more_data.size());
-        memcpy((void *)buffer_data, more_data.data(), more_data.size());
+      if (!buffer_data.empty()) {
         glTexImage2D(cmd_data->target, cmd_data->level,
-                     cmd_data->internalformat, cmd_data->width,
-                     cmd_data->height, cmd_data->border, cmd_data->format,
-                     cmd_data->type, buffer_data);
+        cmd_data->internalformat,
+                     cmd_data->width, cmd_data->height, cmd_data->border,
+                     cmd_data->format, cmd_data->type,
+                     (const void *)buffer_data.data());
       } else {
         glTexImage2D(cmd_data->target, cmd_data->level,
-                     cmd_data->internalformat, cmd_data->width,
-                     cmd_data->height, cmd_data->border, cmd_data->format,
-                     cmd_data->type, NULL);
+        cmd_data->internalformat,
+                     cmd_data->width, cmd_data->height, cmd_data->border,
+                     cmd_data->format, cmd_data->type, NULL);
       }
       break;
     }
-    case GLSC_glClearColor: {
+    case (unsigned char)GL_Server_Command::GLSC_glClearColor: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glClearColor_t *cmd_data = (gl_glClearColor_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glClearColor_t *cmd_data = (gl_glClearColor_t *)data.data();
       glClearColor(cmd_data->red, cmd_data->green, cmd_data->blue,
                    cmd_data->alpha);
 
       break;
     }
-    case GLSC_glDrawArrays: {
+    case (unsigned char)GL_Server_Command::GLSC_glDrawArrays: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glDrawArrays_t *cmd_data = (gl_glDrawArrays_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glDrawArrays_t *cmd_data = (gl_glDrawArrays_t *)data.data();
       glDrawArrays(cmd_data->mode, cmd_data->first, cmd_data->count);
 
       break;
     }
-
-    case GLSC_glViewport: {
+    case (unsigned char)GL_Server_Command::GLSC_glViewport: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glViewport_t *cmd_data = (gl_glViewport_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glViewport_t *cmd_data = (gl_glViewport_t *)data.data();
       glViewport(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
       break;
     }
-    case GLSC_glScissor: {
+    case (unsigned char)GL_Server_Command::GLSC_glScissor: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glScissor_t *cmd_data = (gl_glScissor_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glScissor_t *cmd_data = (gl_glScissor_t *)data.data();
       glScissor(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
       break;
     }
-    case GLSC_BREAK: {
+    case (unsigned char)GL_Server_Command::GLSC_BREAK: {
       quit = true;
       break;
     }
-    case GLSC_glGetIntegerv: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetIntegerv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetIntegerv_t *cmd_data = (gl_glGetIntegerv_t *)data_msg.data();
-
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetIntegerv_t *cmd_data = (gl_glGetIntegerv_t *)data.data();
+      
       GLint result;
       glGetIntegerv(cmd_data->pname, &result);
+      
       hasReturn = true;
-
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(GLint));
 
       break;
     }
-    case GLSC_glGetFloatv: {
+    case (unsigned char)GL_Server_Command::GLSC_glGetFloatv: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGetFloatv_t *cmd_data = (gl_glGetFloatv_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGetFloatv_t *cmd_data = (gl_glGetFloatv_t *)data.data();
 
       GLfloat result;
       glGetFloatv(cmd_data->pname, &result);
+      
       hasReturn = true;
-
       ret.rebuild(sizeof(int));
       memcpy(ret.data(), &result, sizeof(GLint));
 
       break;
     }
-    case GLSC_glGenTextures: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenTextures: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glGenTextures_t *cmd_data = (gl_glGenTextures_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glGenTextures_t *cmd_data = (gl_glGenTextures_t *)data.data();
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenTextures(cmd_data->n, result);
-      
-      for (int i=0; i<cmd_data->n ; i++){
-        glGenTextures_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+
+      for (int i = 0; i < cmd_data->n; i++) {
+        glGenTextures_idx_map.insert(std::make_pair(
+        cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
       }
       break;
     }
-    case GLSC_glGenFramebuffers: {
+    case (unsigned char)GL_Server_Command::GLSC_glGenFramebuffers: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glGenFramebuffers_t *cmd_data =
-          (gl_glGenFramebuffers_t *)data_msg.data();
+          (gl_glGenFramebuffers_t *)data.data();
 
       GLuint *result = new GLuint[cmd_data->n];
       glGenFramebuffers(cmd_data->n, result);
-      
-      for (int i=0; i<cmd_data->n ; i++){
-          glGenFramebuffers_idx_map.insert(std::make_pair(cmd_data->last_index - cmd_data->n + 1 +i, result[i]));
+
+      for (int i = 0; i < cmd_data->n; i++) {
+        glGenFramebuffers_idx_map.insert(std::make_pair(
+            cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
       }
       break;
     }
-    case GLSC_glUniform1ui: {
+    case (unsigned char)GL_Server_Command::GLSC_glUniform1ui: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glUniform1ui_t *cmd_data = (gl_glUniform1ui_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glUniform1ui_t *cmd_data = (gl_glUniform1ui_t *)data.data();
       glUniform1ui(cmd_data->location, cmd_data->v0);
       break;
     }
-    case GLSC_glBeginTransformFeedback: {
+    case (unsigned char)GL_Server_Command::GLSC_glBeginTransformFeedback: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glBeginTransformFeedback_t *cmd_data =
-          (gl_glBeginTransformFeedback_t *)data_msg.data();
+          (gl_glBeginTransformFeedback_t *)data.data();
       glBeginTransformFeedback(cmd_data->primitiveMode);
       break;
     }
-    case GLSC_glEndTransformFeedback: {
+    case (unsigned char)GL_Server_Command::GLSC_glEndTransformFeedback: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glEndTransformFeedback_t *cmd_data =
-          (gl_glEndTransformFeedback_t *)data_msg.data();
+          (gl_glEndTransformFeedback_t *)data.data();
       glEndTransformFeedback();
       break;
     }
-    case GLSC_glVertexAttribDivisor: {
+    case (unsigned char)GL_Server_Command::GLSC_glVertexAttribDivisor: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glVertexAttribDivisor_t *cmd_data =
-          (gl_glVertexAttribDivisor_t *)data_msg.data();
+          (gl_glVertexAttribDivisor_t *)data.data();
       glVertexAttribDivisor(cmd_data->index, cmd_data->divisor);
       break;
     }
-    case GLSC_glDrawArraysInstanced: {
+    case (unsigned char)GL_Server_Command::GLSC_glDrawArraysInstanced: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
       gl_glDrawArraysInstanced_t *cmd_data =
-          (gl_glDrawArraysInstanced_t *)data_msg.data();
+          (gl_glDrawArraysInstanced_t *)data.data();
       glDrawArraysInstanced(cmd_data->mode, cmd_data->first, cmd_data->count,
                             cmd_data->instancecount);
       break;
     }
-    case GLSC_glCullFace: {
+    case (unsigned char)GL_Server_Command::GLSC_glCullFace: {
+      // recv data
       zmq::message_t data_msg;
       auto res = sock.recv(data_msg, zmq::recv_flags::none);
-      gl_glCullFace_t *cmd_data = (gl_glCullFace_t *)data_msg.data();
+      // check cache
+      std::string data = insert_or_check_cache(data_cache, key, data_msg);
+      gl_glCullFace_t *cmd_data = (gl_glCullFace_t *)data.data();
       glCullFace(cmd_data->mode);
       break;
     }
-    case GLSC_bufferSwap: {
+    case (unsigned char)GL_Server_Command::GLSC_bufferSwap: {
       double currentTime = glfwGetTime();
       numOfFrames++;
       if (currentTime - lastTime >= 1.0) {
@@ -1363,28 +1653,37 @@ void Server::run() {
         glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
                      pixel_data);
         auto end = std::chrono::steady_clock::now();
-        std::cout << "glReadPixels: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
+        std::cout << "glReadPixels: "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(
+                         end - start)
+                         .count()
+                  << std::endl;
 
         try {
           auto start = std::chrono::steady_clock::now();
           mq.get()->send(pixel_data, WIDTH * HEIGHT * 4, 0);
           auto end = std::chrono::steady_clock::now();
-          std::cout << "send data to mq: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
+          std::cout << "send data to mq: "
+                    << std::chrono::duration_cast<std::chrono::microseconds>(
+                           end - start)
+                           .count()
+                    << std::endl;
 
         } catch (boost::interprocess::interprocess_exception &ex) {
           std::cout << ex.what() << std::endl;
         }
       }
-      seq_cmd = 0;
+      sequence_number = 0;
       hasReturn = true;
       break;
     }
     default:
       break;
     }
-    if(hasReturn)
+    if (hasReturn)
       sock.send(ret, zmq::send_flags::none);
-    seq_cmd++;
-    // usleep(0.001);
+    sequence_number++;
+    std::cout << std::bitset<8>(c->cmd) << std::endl;
+
   }
 }

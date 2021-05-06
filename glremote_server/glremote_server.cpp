@@ -33,7 +33,7 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, std::map
     zmq::message_t rcv_data;
     auto res = socket.recv(rcv_data, zmq::recv_flags::none);
     // cache checking
-    key = rcv_data.to_string();
+    std::string key = rcv_data.to_string(); // nee dto beat check first 8 and next 64bit cmd and hash => cached otherwise missed
     std::string cmd = key.substr(0, __CHAR_BIT__);
     std::bitset<__CHAR_BIT__> converted_cmd(cmd);
     c = (gl_command_t *)malloc(sizeof(gl_command_t));

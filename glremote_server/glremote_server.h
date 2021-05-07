@@ -11,6 +11,7 @@
 #include <thread>
 #include <unistd.h>
 #include <zmq.hpp>
+#include <zmq_addon.hpp>
 // #include <GL/glew.h>
 #include "glad/glad.h"
 #include <GLFW/glfw3.h>
@@ -25,6 +26,8 @@
 #define WIDTH 1024
 #define HEIGHT 768
 #define FIFO_NAME "splab_stream"
+#define TCP_MINIMUM_PACKET_SIZE 20
+#define CACHE_KEY_SIZE sizeof(size_t) * __CHAR_BIT__ + sizeof(unsigned char) * __CHAR_BIT__
 typedef std::string cache_key;
 class Server
 {
@@ -86,9 +89,8 @@ public:
     // static void run();
     std::string insert_or_check_cache(std::map<cache_key, std::string> &cache, unsigned char cmd, zmq::message_t &data_msg);
     // std::string insert_or_check_cache2(std::map<cache_key, std::string> &cache, cache_key key, zmq::message_t &data_msg);
-    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, std::map<cache_key, std::string> &cache);
+    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache);
     std::string alloc_cached_data(zmq::message_t &data_msg);
-    cache_key cache_key_gen(unsigned char cmd, std::size_t hashed_data);
-    std::string get_value_from_request(zmq::message_t &msg);
+    cache_key create_cache_key(unsigned char cmd, std::size_t hashed_data);
     void init_gl();
 };

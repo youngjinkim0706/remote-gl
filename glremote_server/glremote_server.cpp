@@ -667,7 +667,6 @@ void Server::run()
         {
             std::string data, buffer_data;
             data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
-
             gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)data.data();
 
             // more data cache check

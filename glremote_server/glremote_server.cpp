@@ -6,9 +6,13 @@ int Server::framebufferWidth = 0;
 int shader_compiled = 0;
 bool is_compress_enable = true;
 
+std::vector<std::string> prev_cmd;
+std::vector<std::string> prev_data;
+std::vector<std::string> prev_buffer_data;
+
 unsigned int total_data_size = 0;
 int cache_hit = 0;
-int command_per_frame = 0;
+int sequence_number;
 static void errorCallback(int errorCode, const char *errorDescription)
 
 {
@@ -30,25 +34,15 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
     }
 }
 
-std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache)
+std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache, bool is_recored)
 {
-    zmq::message_t msg;
-    auto res = socket.recv(msg, zmq::recv_flags::none);
-    total_data_size += msg.size();
-
-    if (is_compress_enable)
+    if (!is_recored)
     {
-        switch (cmd)
-        {
-        case (unsigned char)GL_Server_Command::GLSC_glTexSubImage2D:
-        case (unsigned char)GL_Server_Command::GLSC_glTexSubImage3D:
-        case (unsigned char)GL_Server_Command::GLSC_glBlitFramebuffer:
-        case (unsigned char)GL_Server_Command::GLSC_glTexImage2D:
-        case (unsigned char)GL_Server_Command::GLSC_glCompressedTexImage2D:
-        case (unsigned char)GL_Server_Command::GLSC_glBufferData:
-        case (unsigned char)GL_Server_Command::GLSC_glVertexAttribPointer:
-        case (unsigned char)GL_Server_Command::GLSC_glTexImage3D:
-        case (unsigned char)GL_Server_Command::GLSC_glUniformMatrix4fv:
+        zmq::message_t msg;
+        auto res = socket.recv(msg, zmq::recv_flags::none);
+        total_data_size += msg.size();
+
+        if (is_compress_enable)
         {
             std::string uncompressed;
             snappy::Uncompress(msg.to_string().c_str(), msg.size(), &uncompressed);
@@ -56,35 +50,89 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
+                if (cache.begin() == data_cache.begin())
+                {
+                    if (prev_data.size() > sequence_number)
+                        prev_data[sequence_number] = cache.find(key)->second;
+                    else
+                        prev_data.push_back(cache.find(key)->second);
+                }
+                else if (cache.begin() == more_data_cache.begin())
+                {
+                    if (prev_buffer_data.size() > sequence_number)
+                        prev_buffer_data[sequence_number] = cache.find(key)->second;
+                    else
+                        prev_buffer_data.push_back(cache.find(key)->second);
+                }
                 return cache.find(key)->second;
             }
             msg.rebuild(uncompressed.size());
             memcpy(msg.data(), uncompressed.data(), uncompressed.size());
-            break;
         }
-        default:
+        else
         {
             if (is_cached)
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
+
+                if (cache.begin() == data_cache.begin())
+                {
+                    if (prev_data.size() > sequence_number)
+                        prev_data[sequence_number] = cache.find(key)->second;
+                    else
+                        prev_data.push_back(cache.find(key)->second);
+                }
+                else if (cache.begin() == more_data_cache.begin())
+                {
+                    if (prev_buffer_data.size() > sequence_number)
+                        prev_buffer_data[sequence_number] = cache.find(key)->second;
+                    else
+                        prev_buffer_data.push_back(cache.find(key)->second);
+                }
                 return cache.find(key)->second;
             }
-            break;
-        }
         }
 
-        return insert_or_check_cache(cache, cmd, msg);
+        if (cache.begin() == data_cache.begin())
+        {
+            if (prev_data.size() > sequence_number)
+            {
+                prev_data[sequence_number] = insert_or_check_cache(cache, cmd, msg);
+                return prev_data[sequence_number];
+            }
+            else
+            {
+                prev_data.push_back(insert_or_check_cache(cache, cmd, msg));
+                return prev_data.back();
+            }
+        }
+        else
+        {
+            if (prev_buffer_data.size() > sequence_number)
+            {
+                prev_buffer_data[sequence_number] = insert_or_check_cache(cache, cmd, msg);
+                return prev_buffer_data[sequence_number];
+            }
+            else
+            {
+                prev_buffer_data.push_back(insert_or_check_cache(cache, cmd, msg));
+                return prev_buffer_data.back();
+            }
+        }
+        // return insert_or_check_cache(cache, cmd, msg);
     }
+
     else
     {
-        if (is_cached)
+        if (cache.begin() == data_cache.begin())
         {
-            gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
-            cache_key key = create_cache_key(cmd, data->hash_data);
-            return cache.find(key)->second;
+            return prev_data[sequence_number];
         }
-        return insert_or_check_cache(cache, cmd, msg);
+        else
+        {
+            return prev_buffer_data[sequence_number];
+        }
     }
 }
 
@@ -113,12 +161,14 @@ Server::insert_or_check_cache(std::map<cache_key, std::string> &cache,
 {
     bool cached = false;
     std::string cache_data = alloc_cached_data(data_msg);
+
     if (!cache_data.empty())
     {
         std::size_t hashed_data = std::hash<std::string>{}(cache_data);
         cache_key key = create_cache_key(cmd, hashed_data);
         cache[key] = cache_data;
     }
+
     return cache_data;
 }
 void Server::server_bind()
@@ -198,7 +248,7 @@ void Server::run()
     int numOfFrames = 0;
     int count = 0;
     sequence_number = 0;
-
+    int recored_count = 0;
     while (!quit)
     {
         // waiting until data comes here
@@ -208,17 +258,44 @@ void Server::run()
 
         bool hasReturn = false;
         bool call_cache = false;
-
+        bool is_recored = false;
+        gl_command_t *c;
         auto res = sock.recv(msg, zmq::recv_flags::none);
+        if (msg.empty())
+        {
+            c = (gl_command_t *)prev_cmd[sequence_number].data();
+            is_recored = true;
+            recored_count++;
+        }
+        else
+        {
+            c = (gl_command_t *)msg.data();
+            switch (c->cmd)
+            {
+            case (unsigned char)GL_Server_Command::GLSC_glTransformFeedbackVaryings:
+            case (unsigned char)GL_Server_Command::GLSC_glShaderSource:
+            case (unsigned char)GL_Server_Command::GLSC_bufferSwap:
+                break;
+            default:
+                if (prev_cmd.size() > sequence_number)
+                {
+                    prev_cmd[sequence_number] = msg.to_string();
+                }
+                else
+                {
+                    prev_cmd.push_back(msg.to_string());
+                    prev_data.push_back(msg.to_string());        // fake data
+                    prev_buffer_data.push_back(msg.to_string()); // fake data
+                }
+                break;
+            }
+        }
 
-        gl_command_t *c = (gl_command_t *)msg.data();
-
-        command_per_frame++;
         switch (c->cmd)
         {
         case (unsigned char)GL_Server_Command::GLSC_glClear:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glClear_t *cmd_data = (gl_glClear_t *)data.data();
             glClear(cmd_data->mask);
@@ -227,7 +304,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glBegin:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBegin_t *cmd_data = (gl_glBegin_t *)data.data();
             glBegin(cmd_data->mode);
@@ -236,7 +313,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glColor3f:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glColor3f_t *cmd_data = (gl_glColor3f_t *)data.data();
             glColor3f(cmd_data->red, cmd_data->green, cmd_data->blue);
@@ -245,7 +322,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glVertex3f:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glVertex3f_t *cmd_data = (gl_glVertex3f_t *)data.data();
             glVertex3f(cmd_data->x, cmd_data->y, cmd_data->z);
@@ -270,7 +347,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glCreateShader:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glCreateShader_t *cmd_data = (gl_glCreateShader_t *)data.data();
             GLuint shader = glCreateShader(cmd_data->type);
@@ -347,16 +424,16 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glCompileShader:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glCompileShader_t *cmd_data = (gl_glCompileShader_t *)data.data();
-            glCompileShader(cmd_data->shader);
 
+            glCompileShader(cmd_data->shader);
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetShaderiv:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetShaderiv_t *cmd_data = (gl_glGetShaderiv_t *)data.data();
 
@@ -380,7 +457,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glReadPixels:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glReadPixels_t *cmd_data = (gl_glReadPixels_t *)data.data();
 
@@ -416,7 +493,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glBlendFuncSeparate:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBlendFuncSeparate_t *cmd_data =
                 (gl_glBlendFuncSeparate_t *)data.data();
@@ -427,7 +504,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glBlendFunc:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBlendFunc_t *cmd_data = (gl_glBlendFunc_t *)data.data();
             glBlendFunc(cmd_data->sfactor, cmd_data->dfactor);
@@ -436,7 +513,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glVertexAttrib4f:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glVertexAttrib4f_t *cmd_data = (gl_glVertexAttrib4f_t *)data.data();
 
@@ -447,7 +524,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glDisableVertexAttribArray:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDisableVertexAttribArray_t *cmd_data =
                 (gl_glDisableVertexAttribArray_t *)data.data();
@@ -458,7 +535,7 @@ void Server::run()
 
         case (unsigned char)GL_Server_Command::GLSC_glCreateProgram:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             GLuint program = glCreateProgram();
 
@@ -470,7 +547,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glCheckFramebufferStatus:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glCheckFramebufferStatus_t *cmd_data =
                 (gl_glCheckFramebufferStatus_t *)data.data();
@@ -484,7 +561,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glAttachShader:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glAttachShader_t *cmd_data = (gl_glAttachShader_t *)data.data();
             glAttachShader(cmd_data->program, cmd_data->shader);
@@ -494,7 +571,7 @@ void Server::run()
 
         case (unsigned char)GL_Server_Command::GLSC_glDisable:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDisable_t *cmd_data = (gl_glDisable_t *)data.data();
             glDisable(cmd_data->cap);
@@ -504,12 +581,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glTexImage3D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexImage3D_t *cmd_data = (gl_glTexImage3D_t *)data.data();
-
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -529,7 +605,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGenerateMipmap:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)data.data();
             glGenerateMipmap(cmd_data->target);
@@ -538,7 +614,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glFrontFace:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data.data();
             glFrontFace(cmd_data->mode);
@@ -547,7 +623,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glDepthMask:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDepthMask_t *cmd_data = (gl_glDepthMask_t *)data.data();
             glDepthMask(cmd_data->flag);
@@ -556,7 +632,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glBlendEquation:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBlendEquation_t *cmd_data = (gl_glBlendEquation_t *)data.data();
             glBlendEquation(cmd_data->mode);
@@ -565,7 +641,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glEnable:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glEnable_t *cmd_data = (gl_glEnable_t *)data.data();
             glEnable(cmd_data->cap);
@@ -574,7 +650,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glLinkProgram:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glLinkProgram_t *cmd_data = (gl_glLinkProgram_t *)data.data();
             glLinkProgram(cmd_data->program);
@@ -583,7 +659,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetProgramiv:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetProgramiv_t *cmd_data = (gl_glGetProgramiv_t *)data.data();
 
@@ -606,7 +682,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetError:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             GLenum error = glGetError();
 
@@ -618,7 +694,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glTexStorage2D:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexStorage2D_t *cmd_data = (gl_glTexStorage2D_t *)data.data();
             glTexStorage2D(cmd_data->target, cmd_data->levels,
@@ -629,7 +705,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glTexParameteri:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexParameteri_t *cmd_data = (gl_glTexParameteri_t *)data.data();
             glTexParameteri(cmd_data->target, cmd_data->pname, cmd_data->param);
@@ -638,7 +714,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGenBuffers:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenBuffers_t *cmd_data = (gl_glGenBuffers_t *)data.data();
             GLuint *result = new GLuint[cmd_data->n];
@@ -654,7 +730,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGenRenderbuffers:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenRenderbuffers_t *cmd_data =
                 (gl_glGenRenderbuffers_t *)data.data();
@@ -671,7 +747,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glBindRenderbuffer:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindRenderbuffer_t *cmd_data =
                 (gl_glBindRenderbuffer_t *)data.data();
@@ -685,7 +761,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glRenderbufferStorage:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glRenderbufferStorage_t *cmd_data =
                 (gl_glRenderbufferStorage_t *)data.data();
@@ -697,7 +773,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glFramebufferRenderbuffer:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glFramebufferRenderbuffer_t *cmd_data =
                 (gl_glFramebufferRenderbuffer_t *)data.data();
@@ -710,11 +786,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glTexSubImage3D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
             gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)data.data();
 
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -735,7 +811,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindBuffer:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindBuffer_t *cmd_data = (gl_glBindBuffer_t *)data.data();
             GLuint buffer_id =
@@ -747,7 +823,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindFramebuffer:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindFramebuffer_t *cmd_data = (gl_glBindFramebuffer_t *)data.data();
             GLuint buffer_id =
@@ -760,7 +836,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindBufferBase:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindBufferBase_t *cmd_data = (gl_glBindBufferBase_t *)data.data();
             GLuint buffer_id =
@@ -773,12 +849,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDeleteTextures:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)data.data();
 
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteTextures(cmd_data->n, (GLuint *)buffer_data.data());
 
@@ -787,12 +863,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDeleteFramebuffers:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDeleteFramebuffers_t *cmd_data =
                 (gl_glDeleteFramebuffers_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteFramebuffers(cmd_data->n, (GLuint *)buffer_data.data());
 
@@ -801,7 +877,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform1f:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform1f_t *cmd_data = (gl_glUniform1f_t *)data.data();
             glUniform1f(cmd_data->location, cmd_data->v0);
@@ -811,7 +887,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glFramebufferTextureLayer:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glFramebufferTextureLayer_t *cmd_data =
                 (gl_glFramebufferTextureLayer_t *)data.data();
@@ -825,7 +901,7 @@ void Server::run()
             GL_Server_Command::GLSC_glRenderbufferStorageMultisample:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glRenderbufferStorageMultisample_t *cmd_data =
                 (gl_glRenderbufferStorageMultisample_t *)data.data();
@@ -838,13 +914,13 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDeleteRenderbuffers:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDeleteRenderbuffers_t *cmd_data =
                 (gl_glDeleteRenderbuffers_t *)data.data();
 
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteRenderbuffers(cmd_data->n, (GLuint *)buffer_data.data());
             break;
@@ -852,11 +928,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glClearBufferfv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glClearBufferfv_t *cmd_data = (gl_glClearBufferfv_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer,
                             (GLfloat *)buffer_data.data());
@@ -865,7 +941,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDepthFunc:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDepthFunc_t *cmd_data = (gl_glDepthFunc_t *)data.data();
             glDepthFunc(cmd_data->func);
@@ -874,7 +950,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glColorMask:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glColorMask_t *cmd_data = (gl_glColorMask_t *)data.data();
             glColorMask(cmd_data->red, cmd_data->green, cmd_data->blue,
@@ -884,7 +960,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glClearDepthf:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glClearDepthf_t *cmd_data = (gl_glClearDepthf_t *)data.data();
             glClearDepth(cmd_data->d);
@@ -893,12 +969,15 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glFramebufferTexture2D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glFramebufferTexture2D_t *cmd_data =
                 (gl_glFramebufferTexture2D_t *)data.data();
+            GLuint texture =
+                (GLuint)glGenTextures_idx_map.find(cmd_data->texture)->second;
+
             glFramebufferTexture2D(cmd_data->target, cmd_data->attachment,
-                                   cmd_data->textarget, cmd_data->texture,
+                                   cmd_data->textarget, texture,
                                    cmd_data->level);
 
             break;
@@ -906,11 +985,10 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBufferData:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
             gl_glBufferData_t *cmd_data = (gl_glBufferData_t *)data.data();
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
-
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
             if (!buffer_data.empty())
             {
                 glBufferData(cmd_data->target, cmd_data->size, buffer_data.data(),
@@ -926,11 +1004,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBufferSubData:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBufferSubData_t *cmd_data = (gl_glBufferSubData_t *)data.data();
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -948,11 +1026,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform4fv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform4fv_t *cmd_data = (gl_glUniform4fv_t *)data.data();
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -969,7 +1047,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform1i:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data.data();
             glUniform1i(cmd_data->location, cmd_data->v0);
@@ -979,7 +1057,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniformBlockBinding:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniformBlockBinding_t *cmd_data =
                 (gl_glUniformBlockBinding_t *)data.data();
@@ -991,7 +1069,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glPixelStorei:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glPixelStorei_t *cmd_data = (gl_glPixelStorei_t *)data.data();
             glPixelStorei(cmd_data->pname, cmd_data->param);
@@ -1001,7 +1079,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glTexParameterf:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexParameterf_t *cmd_data = (gl_glTexParameterf_t *)data.data();
             glTexParameterf(cmd_data->target, cmd_data->pname, cmd_data->param);
@@ -1011,11 +1089,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glVertexAttrib4fv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glVertexAttrib4fv_t *cmd_data = (gl_glVertexAttrib4fv_t *)data.data();
             // more data cache check
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1031,7 +1109,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDrawElements:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDrawElements_t *cmd_data = (gl_glDrawElements_t *)data.data();
             glDrawElements(cmd_data->mode, cmd_data->count, cmd_data->type,
@@ -1041,11 +1119,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform2fv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform2fv_t *cmd_data = (gl_glUniform2fv_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1062,12 +1140,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniformMatrix4fv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniformMatrix4fv_t *cmd_data =
                 (gl_glUniformMatrix4fv_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
             if (!buffer_data.empty())
             {
                 glUniformMatrix4fv(cmd_data->location, cmd_data->count,
@@ -1084,7 +1162,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGenVertexArrays:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenVertexArrays_t *cmd_data = (gl_glGenVertexArrays_t *)data.data();
 
@@ -1093,6 +1171,7 @@ void Server::run()
 
             for (int i = 0; i < cmd_data->n; i++)
             {
+                // std::cout << result[i] << std::endl;
                 glGenVertexArrays_idx_map.insert(std::make_pair(
                     cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
             }
@@ -1102,11 +1181,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDrawBuffers:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDrawBuffers_t *cmd_data = (gl_glDrawBuffers_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDrawBuffers(cmd_data->n, (GLenum *)buffer_data.data());
 
@@ -1115,12 +1194,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDeleteVertexArrays:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDeleteVertexArrays_t *cmd_data =
                 (gl_glDeleteVertexArrays_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteVertexArrays(cmd_data->n, (GLuint *)buffer_data.data());
 
@@ -1129,11 +1208,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDeleteBuffers:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteBuffers(cmd_data->n, (GLuint *)buffer_data.data());
 
@@ -1142,7 +1221,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glReadBuffer:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glReadBuffer_t *cmd_data = (gl_glReadBuffer_t *)data.data();
             glReadBuffer(cmd_data->src);
@@ -1153,7 +1232,7 @@ void Server::run()
         {
             // recv data
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBlitFramebuffer_t *cmd_data = (gl_glBlitFramebuffer_t *)data.data();
             glBlitFramebuffer(cmd_data->srcX0, cmd_data->srcY0, cmd_data->srcX1,
@@ -1166,29 +1245,28 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindVertexArray:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindVertexArray_t *cmd_data = (gl_glBindVertexArray_t *)data.data();
             GLuint array =
                 (GLuint)glGenVertexArrays_idx_map.find(cmd_data->array)->second;
 
-            glBindVertexArray(cmd_data->array);
+            glBindVertexArray(array);
 
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetAttribLocation:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetAttribLocation_t *cmd_data =
                 (gl_glGetAttribLocation_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             GLint positionAttr =
                 glGetAttribLocation(cmd_data->programObj, buffer_data.c_str());
-
             hasReturn = true;
             ret.rebuild(sizeof(GLint));
             memcpy(ret.data(), &positionAttr, sizeof(GLint));
@@ -1198,12 +1276,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindAttribLocation:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindAttribLocation_t *cmd_data =
                 (gl_glBindAttribLocation_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glBindAttribLocation(cmd_data->program, cmd_data->index,
                                  buffer_data.c_str());
@@ -1213,12 +1291,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glCompressedTexImage2D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glCompressedTexImage2D_t *cmd_data =
                 (gl_glCompressedTexImage2D_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1239,12 +1317,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGetUniformLocation:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetUniformLocation_t *cmd_data =
                 (gl_glGetUniformLocation_t *)data.data();
-
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             GLint location =
                 glGetUniformLocation(cmd_data->program, buffer_data.c_str());
@@ -1258,12 +1335,12 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGetUniformBlockIndex:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetUniformBlockIndex_t *cmd_data =
                 (gl_glGetUniformBlockIndex_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             GLint index =
                 glGetUniformBlockIndex(cmd_data->program, buffer_data.c_str());
@@ -1277,7 +1354,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGetStringi:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetStringi_t *cmd_data = (gl_glGetStringi_t *)data.data();
 
@@ -1295,11 +1372,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glTexSubImage2D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexSubImage2D_t *cmd_data = (gl_glTexSubImage2D_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1317,7 +1394,7 @@ void Server::run()
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetString:
         {
-            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetString_t *cmd_data = (gl_glGetString_t *)data.data();
             const GLubyte *strings = glGetString(cmd_data->name);
@@ -1333,10 +1410,14 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glVertexAttribPointer:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glVertexAttribPointer_t *cmd_data =
                 (gl_glVertexAttribPointer_t *)data.data();
+            // std::cout << cmd_data->index << "\t" << cmd_data->size << "\t" << cmd_data->type << "\t" << cmd_data->normalized << "\t" << cmd_data->stride << "\t" << (void *)cmd_data->pointer << std::endl;
+
+            // std::cout << sequence_number << "\t" << (void *)cmd_data->pointer << std::endl;
+
             glVertexAttribPointer(cmd_data->index, cmd_data->size, cmd_data->type,
                                   cmd_data->normalized, cmd_data->stride,
                                   (void *)cmd_data->pointer); // pointer add 0
@@ -1346,10 +1427,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glEnableVertexAttribArray:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glEnableVertexAttribArray_t *cmd_data =
                 (gl_glEnableVertexAttribArray_t *)data.data();
+
             glEnableVertexAttribArray(cmd_data->index);
 
             break;
@@ -1357,7 +1439,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUseProgram:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUseProgram_t *cmd_data = (gl_glUseProgram_t *)data.data();
             glUseProgram(cmd_data->program);
@@ -1367,9 +1449,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glActiveTexture:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data.data();
+            // std::cout << "active: " << cmd_data->texture << std::endl;
+
             glActiveTexture(cmd_data->texture);
 
             break;
@@ -1377,7 +1461,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBindTexture:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBindTexture_t *cmd_data = (gl_glBindTexture_t *)data.data();
             GLuint texture =
@@ -1390,11 +1474,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glTexImage2D:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glTexImage2D_t *cmd_data = (gl_glTexImage2D_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1415,7 +1499,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glClearColor:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glClearColor_t *cmd_data = (gl_glClearColor_t *)data.data();
             glClearColor(cmd_data->red, cmd_data->green, cmd_data->blue,
@@ -1426,7 +1510,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDrawArrays:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDrawArrays_t *cmd_data = (gl_glDrawArrays_t *)data.data();
             glDrawArrays(cmd_data->mode, cmd_data->first, cmd_data->count);
@@ -1436,7 +1520,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glViewport:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glViewport_t *cmd_data = (gl_glViewport_t *)data.data();
             glViewport(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
@@ -1446,7 +1530,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glScissor:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glScissor_t *cmd_data = (gl_glScissor_t *)data.data();
             glScissor(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
@@ -1460,7 +1544,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGetIntegerv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetIntegerv_t *cmd_data = (gl_glGetIntegerv_t *)data.data();
 
@@ -1476,7 +1560,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGetFloatv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGetFloatv_t *cmd_data = (gl_glGetFloatv_t *)data.data();
 
@@ -1492,7 +1576,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGenTextures:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenTextures_t *cmd_data = (gl_glGenTextures_t *)data.data();
 
@@ -1509,7 +1593,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glGenFramebuffers:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glGenFramebuffers_t *cmd_data = (gl_glGenFramebuffers_t *)data.data();
 
@@ -1526,7 +1610,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform1ui:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform1ui_t *cmd_data = (gl_glUniform1ui_t *)data.data();
             glUniform1ui(cmd_data->location, cmd_data->v0);
@@ -1535,7 +1619,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glBeginTransformFeedback:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glBeginTransformFeedback_t *cmd_data =
                 (gl_glBeginTransformFeedback_t *)data.data();
@@ -1553,7 +1637,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glVertexAttribDivisor:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glVertexAttribDivisor_t *cmd_data =
                 (gl_glVertexAttribDivisor_t *)data.data();
@@ -1563,7 +1647,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glDrawArraysInstanced:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glDrawArraysInstanced_t *cmd_data =
                 (gl_glDrawArraysInstanced_t *)data.data();
@@ -1574,7 +1658,7 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glCullFace:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glCullFace_t *cmd_data = (gl_glCullFace_t *)data.data();
             glCullFace(cmd_data->mode);
@@ -1583,11 +1667,11 @@ void Server::run()
         case (unsigned char)GL_Server_Command::GLSC_glUniform1iv:
         {
             std::string data, buffer_data;
-            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache);
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glUniform1iv_t *cmd_data = (gl_glUniform1iv_t *)data.data();
 
-            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
+            buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             if (!buffer_data.empty())
             {
@@ -1611,10 +1695,9 @@ void Server::run()
             {
 
                 printf("%f ms/frame  %d fps %d bytes %d hit %d commands\n", 1000.0 / double(numOfFrames),
-                       numOfFrames, total_data_size, cache_hit, command_per_frame);
+                       numOfFrames, total_data_size, recored_count, sequence_number);
                 numOfFrames = 0;
                 total_data_size = 0;
-                command_per_frame = 0;
                 cache_hit = 0;
                 lastTime = currentTime;
             }
@@ -1653,13 +1736,15 @@ void Server::run()
                     std::cout << ex.what() << std::endl;
                 }
             }
-            sequence_number = 0;
+            sequence_number = -1;
+            recored_count = 0;
             hasReturn = true;
             break;
         }
         }
         if (hasReturn)
             sock.send(ret, zmq::send_flags::none);
+
         sequence_number++;
     }
 }

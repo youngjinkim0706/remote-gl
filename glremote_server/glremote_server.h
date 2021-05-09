@@ -90,7 +90,7 @@ public:
     // static void run();
     std::string insert_or_check_cache(std::map<cache_key, std::string> &cache, unsigned char cmd, zmq::message_t &data_msg);
     // std::string insert_or_check_cache2(std::map<cache_key, std::string> &cache, cache_key key, zmq::message_t &data_msg);
-    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache);
+    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache, bool is_recored);
     std::string alloc_cached_data(zmq::message_t &data_msg);
     cache_key create_cache_key(unsigned char cmd, std::size_t hashed_data);
     void init_gl();

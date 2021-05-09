@@ -73,7 +73,7 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
         mq.get()->receive(pixel_data, size, recvd_size, priority);
         auto end = std::chrono::steady_clock::now();
 
-        std::cout << "read data from mq: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
+        // std::cout << "read data from mq: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
 
     }
     catch(boost::interprocess::interprocess_exception &ex){
@@ -91,11 +91,10 @@ need_data (GstElement * appsrc, guint unused, MyContext * ctx)
 
     gst_buffer_unmap (buffer, &map);
     auto end = std::chrono::steady_clock::now();
-    std::cout << "gst buffer: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;
 
     /* increment the timestamp every 1/2 second */
     GST_BUFFER_PTS (buffer) = ctx->timestamp;
-    GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (1, GST_SECOND, 144);
+    GST_BUFFER_DURATION (buffer) = gst_util_uint64_scale_int (1, GST_SECOND, 60);
     ctx->timestamp += GST_BUFFER_DURATION (buffer);
 
     g_signal_emit_by_name (appsrc, "push-buffer", buffer, &ret);
@@ -174,7 +173,7 @@ main (int argc, char *argv[])
     * element with pay%d names will be a stream */
     factory = gst_rtsp_media_factory_new ();
     gst_rtsp_media_factory_set_launch (factory,
-        "( appsrc name=mysrc ! queue ! videoconvert ! x264enc speed-preset=superfast tune=zerolatency bitrate=2250 ! rtph264pay name=pay0 pt=96 )");
+        "( appsrc name=mysrc ! queue ! videoconvert ! x264enc speed-preset=superfast tune=zerolatency bitrate=4500 ! rtph264pay name=pay0 pt=96 )");
 
     /* notify when our media is ready, This is called whenever someone asks for
     * the media and a new pipeline with our appsrc is created */

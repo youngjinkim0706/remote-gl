@@ -9,3 +9,5 @@ uftrace.data/*
 protobuf/*
 *.trace
 splab_stream
+hit_ratio
+gl_server.*

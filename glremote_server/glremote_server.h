@@ -18,6 +18,7 @@
 #include <bitset>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <boost/scoped_ptr.hpp>
+#include <snappy.h>
 // #include <GL/glut.h>
 
 #include "gl_commands.h"

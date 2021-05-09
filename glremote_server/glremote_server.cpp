@@ -4,6 +4,7 @@
 int Server::framebufferHeight = 0;
 int Server::framebufferWidth = 0;
 int shader_compiled = 0;
+bool is_compress_enable = true;
 
 unsigned int total_data_size = 0;
 int cache_hit = 0;
@@ -34,14 +35,31 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
     zmq::message_t msg;
     auto res = socket.recv(msg, zmq::recv_flags::none);
     total_data_size += msg.size();
-    if (is_cached)
-    {
-        gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
-        cache_key key = create_cache_key(cmd, data->hash_data);
-        return cache.find(key)->second;
-    }
 
-    return insert_or_check_cache(cache, cmd, msg);
+    if (is_compress_enable)
+    {
+        std::string uncompressed;
+        snappy::Uncompress(msg.to_string().c_str(), msg.size(), &uncompressed);
+        if (is_cached)
+        {
+            gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
+            cache_key key = create_cache_key(cmd, data->hash_data);
+            return cache.find(key)->second;
+        }
+        zmq::message_t msg2(uncompressed.size());
+        memcpy(msg2.data(), uncompressed.data(), uncompressed.size());
+        return insert_or_check_cache(cache, cmd, msg2);
+    }
+    else
+    {
+        if (is_cached)
+        {
+            gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
+            cache_key key = create_cache_key(cmd, data->hash_data);
+            return cache.find(key)->second;
+        }
+        return insert_or_check_cache(cache, cmd, msg);
+    }
 }
 
 cache_key Server::create_cache_key(unsigned char cmd, std::size_t hashed_data)
@@ -1024,7 +1042,6 @@ void Server::run()
                 (gl_glUniformMatrix4fv_t *)data.data();
 
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache);
-
             if (!buffer_data.empty())
             {
                 glUniformMatrix4fv(cmd_data->location, cmd_data->count,

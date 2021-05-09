@@ -38,17 +38,43 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
 
     if (is_compress_enable)
     {
-        std::string uncompressed;
-        snappy::Uncompress(msg.to_string().c_str(), msg.size(), &uncompressed);
-        if (is_cached)
+        switch (cmd)
         {
-            gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
-            cache_key key = create_cache_key(cmd, data->hash_data);
-            return cache.find(key)->second;
+        case (unsigned char)GL_Server_Command::GLSC_glTexSubImage2D:
+        case (unsigned char)GL_Server_Command::GLSC_glTexSubImage3D:
+        case (unsigned char)GL_Server_Command::GLSC_glBlitFramebuffer:
+        case (unsigned char)GL_Server_Command::GLSC_glTexImage2D:
+        case (unsigned char)GL_Server_Command::GLSC_glCompressedTexImage2D:
+        case (unsigned char)GL_Server_Command::GLSC_glBufferData:
+        case (unsigned char)GL_Server_Command::GLSC_glVertexAttribPointer:
+        case (unsigned char)GL_Server_Command::GLSC_glTexImage3D:
+        case (unsigned char)GL_Server_Command::GLSC_glUniformMatrix4fv:
+        {
+            std::string uncompressed;
+            snappy::Uncompress(msg.to_string().c_str(), msg.size(), &uncompressed);
+            if (is_cached)
+            {
+                gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
+                cache_key key = create_cache_key(cmd, data->hash_data);
+                return cache.find(key)->second;
+            }
+            msg.rebuild(uncompressed.size());
+            memcpy(msg.data(), uncompressed.data(), uncompressed.size());
+            break;
         }
-        zmq::message_t msg2(uncompressed.size());
-        memcpy(msg2.data(), uncompressed.data(), uncompressed.size());
-        return insert_or_check_cache(cache, cmd, msg2);
+        default:
+        {
+            if (is_cached)
+            {
+                gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
+                cache_key key = create_cache_key(cmd, data->hash_data);
+                return cache.find(key)->second;
+            }
+            break;
+        }
+        }
+
+        return insert_or_check_cache(cache, cmd, msg);
     }
     else
     {

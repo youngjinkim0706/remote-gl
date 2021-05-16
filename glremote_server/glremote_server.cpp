@@ -6,9 +6,7 @@ int Server::framebufferWidth = 0;
 int shader_compiled = 0;
 bool is_compress_enable = true;
 
-std::vector<std::string> prev_cmd;
-std::vector<std::string> prev_data;
-std::vector<std::string> prev_buffer_data;
+std::vector<record_t> prev_record, current_record;
 
 unsigned int total_data_size = 0;
 int cache_hit = 0;
@@ -36,11 +34,20 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
 
 std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache, bool is_recored)
 {
-    if (!is_recored)
+    if (is_recored)
+    {
+        // std::size_t key = std::hash<std::string>{}(current_record[sequence_number]);
+        record_t record = prev_record[sequence_number];
+
+        if (cache.begin() == data_cache.begin())
+            return cache.find(record.data_key)->second;
+        else
+            return cache.find(record.more_data_key)->second;
+    }
+    else
     {
         zmq::message_t msg;
         auto res = socket.recv(msg, zmq::recv_flags::none);
-        total_data_size += msg.size();
 
         if (is_compress_enable)
         {
@@ -50,20 +57,6 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
-                if (cache.begin() == data_cache.begin())
-                {
-                    if (prev_data.size() > sequence_number)
-                        prev_data[sequence_number] = cache.find(key)->second;
-                    else
-                        prev_data.push_back(cache.find(key)->second);
-                }
-                else if (cache.begin() == more_data_cache.begin())
-                {
-                    if (prev_buffer_data.size() > sequence_number)
-                        prev_buffer_data[sequence_number] = cache.find(key)->second;
-                    else
-                        prev_buffer_data.push_back(cache.find(key)->second);
-                }
                 return cache.find(key)->second;
             }
             msg.rebuild(uncompressed.size());
@@ -75,64 +68,11 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
-
-                if (cache.begin() == data_cache.begin())
-                {
-                    if (prev_data.size() > sequence_number)
-                        prev_data[sequence_number] = cache.find(key)->second;
-                    else
-                        prev_data.push_back(cache.find(key)->second);
-                }
-                else if (cache.begin() == more_data_cache.begin())
-                {
-                    if (prev_buffer_data.size() > sequence_number)
-                        prev_buffer_data[sequence_number] = cache.find(key)->second;
-                    else
-                        prev_buffer_data.push_back(cache.find(key)->second);
-                }
                 return cache.find(key)->second;
             }
         }
 
-        if (cache.begin() == data_cache.begin())
-        {
-            if (prev_data.size() > sequence_number)
-            {
-                prev_data[sequence_number] = insert_or_check_cache(cache, cmd, msg);
-                return prev_data[sequence_number];
-            }
-            else
-            {
-                prev_data.push_back(insert_or_check_cache(cache, cmd, msg));
-                return prev_data.back();
-            }
-        }
-        else
-        {
-            if (prev_buffer_data.size() > sequence_number)
-            {
-                prev_buffer_data[sequence_number] = insert_or_check_cache(cache, cmd, msg);
-                return prev_buffer_data[sequence_number];
-            }
-            else
-            {
-                prev_buffer_data.push_back(insert_or_check_cache(cache, cmd, msg));
-                return prev_buffer_data.back();
-            }
-        }
-        // return insert_or_check_cache(cache, cmd, msg);
-    }
-
-    else
-    {
-        if (cache.begin() == data_cache.begin())
-        {
-            return prev_data[sequence_number];
-        }
-        else
-        {
-            return prev_buffer_data[sequence_number];
-        }
+        return insert_or_check_cache(cache, cmd, msg);
     }
 }
 
@@ -162,12 +102,12 @@ Server::insert_or_check_cache(std::map<cache_key, std::string> &cache,
     bool cached = false;
     std::string cache_data = alloc_cached_data(data_msg);
 
-    if (!cache_data.empty())
-    {
-        std::size_t hashed_data = std::hash<std::string>{}(cache_data);
-        cache_key key = create_cache_key(cmd, hashed_data);
-        cache[key] = cache_data;
-    }
+    // if (!cache_data.empty())
+    // {
+    std::size_t hashed_data = std::hash<std::string>{}(cache_data);
+    cache_key key = create_cache_key(cmd, hashed_data);
+    cache[key] = cache_data;
+    // }
 
     return cache_data;
 }
@@ -188,6 +128,27 @@ void Server::server_bind()
     }
 }
 
+void Server::append_record(gl_command_t *c, std::string data, std::string more_data)
+{
+    cache_key data_key, more_data_key;
+    data_key = create_cache_key(c->cmd, std::hash<std::string>{}(data));
+    more_data_key = create_cache_key(c->cmd, std::hash<std::string>{}(more_data));
+
+    record_t record_ = { { c->cmd, c->is_data_cached, c->is_more_data_cached }, data_key, more_data_key };
+    current_record.push_back(record_);
+}
+
+void Server::append_record(gl_command_t *c, std::string data)
+{
+    cache_key data_key, more_data_key;
+    data_key = create_cache_key(c->cmd, std::hash<std::string>{}(data));
+    record_t record_ = {
+        { c->cmd, c->is_data_cached, c->is_more_data_cached },
+        data_key,
+        more_data_key
+    };
+    current_record.push_back(record_);
+}
 static void framebufferSizeCallback(GLFWwindow *window, int width, int height)
 {
     //처음 2개의 파라미터는 viewport rectangle의 왼쪽 아래 좌표
@@ -237,7 +198,7 @@ void Server::init_gl()
     glEnable(GL_DEBUG_OUTPUT);
     glDebugMessageCallback(MessageCallback, 0);
 
-    // glfwSwapInterval(1);
+    // glfwSwapInterval(0);
 }
 void Server::run()
 {
@@ -260,46 +221,27 @@ void Server::run()
         bool call_cache = false;
         bool is_recored = false;
         gl_command_t *c;
-        auto res = sock.recv(msg, zmq::recv_flags::none);
-        if (msg.empty())
+        auto res = sock.recv(msg, zmq::recv_flags::none); //entry point
+        if (msg.size() == 0)                              // previous exist command for drawing frame
         {
-            c = (gl_command_t *)prev_cmd[sequence_number].data();
+            record_t record = prev_record[sequence_number];
+            // c = &(record.cmd);
+            memcpy(c, &(record.cmd), sizeof(gl_command_t));
             is_recored = true;
             recored_count++;
         }
-        else
-        {
+        else // cache missed
             c = (gl_command_t *)msg.data();
-            switch (c->cmd)
-            {
-            case (unsigned char)GL_Server_Command::GLSC_glTransformFeedbackVaryings:
-            case (unsigned char)GL_Server_Command::GLSC_glShaderSource:
-            case (unsigned char)GL_Server_Command::GLSC_bufferSwap:
-                break;
-            default:
-                if (prev_cmd.size() > sequence_number)
-                {
-                    prev_cmd[sequence_number] = msg.to_string();
-                }
-                else
-                {
-                    prev_cmd.push_back(msg.to_string());
-                    prev_data.push_back(msg.to_string());        // fake data
-                    prev_buffer_data.push_back(msg.to_string()); // fake data
-                }
-                break;
-            }
-        }
 
         switch (c->cmd)
         {
         case (unsigned char)GL_Server_Command::GLSC_glClear:
         {
             std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
-
             gl_glClear_t *cmd_data = (gl_glClear_t *)data.data();
-            glClear(cmd_data->mask);
 
+            glClear(cmd_data->mask);
+            append_record(c, data);
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glBegin:
@@ -308,6 +250,7 @@ void Server::run()
 
             gl_glBegin_t *cmd_data = (gl_glBegin_t *)data.data();
             glBegin(cmd_data->mode);
+            append_record(c, data);
 
             break;
         }
@@ -317,6 +260,7 @@ void Server::run()
 
             gl_glColor3f_t *cmd_data = (gl_glColor3f_t *)data.data();
             glColor3f(cmd_data->red, cmd_data->green, cmd_data->blue);
+            append_record(c, data);
 
             break;
         }
@@ -326,6 +270,7 @@ void Server::run()
 
             gl_glVertex3f_t *cmd_data = (gl_glVertex3f_t *)data.data();
             glVertex3f(cmd_data->x, cmd_data->y, cmd_data->z);
+            append_record(c, data);
 
             break;
         }
@@ -351,6 +296,8 @@ void Server::run()
 
             gl_glCreateShader_t *cmd_data = (gl_glCreateShader_t *)data.data();
             GLuint shader = glCreateShader(cmd_data->type);
+
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLuint));
@@ -429,6 +376,8 @@ void Server::run()
             gl_glCompileShader_t *cmd_data = (gl_glCompileShader_t *)data.data();
 
             glCompileShader(cmd_data->shader);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetShaderiv:
@@ -439,6 +388,7 @@ void Server::run()
 
             int result;
             glGetShaderiv(cmd_data->shader, cmd_data->pname, &result);
+            append_record(c, data);
 
             shader_compiled++;
             if (!result)
@@ -483,6 +433,7 @@ void Server::run()
             void *result = malloc(size);
             glReadPixels(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height,
                          cmd_data->format, cmd_data->type, result);
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(size);
@@ -499,6 +450,7 @@ void Server::run()
                 (gl_glBlendFuncSeparate_t *)data.data();
             glBlendFuncSeparate(cmd_data->sfactorRGB, cmd_data->dfactorRGB,
                                 cmd_data->sfactorAlpha, cmd_data->dfactorAlpha);
+            append_record(c, data);
 
             break;
         }
@@ -508,6 +460,7 @@ void Server::run()
 
             gl_glBlendFunc_t *cmd_data = (gl_glBlendFunc_t *)data.data();
             glBlendFunc(cmd_data->sfactor, cmd_data->dfactor);
+            append_record(c, data);
 
             break;
         }
@@ -519,6 +472,7 @@ void Server::run()
 
             glVertexAttrib4f(cmd_data->index, cmd_data->x, cmd_data->y, cmd_data->z,
                              cmd_data->w);
+            append_record(c, data);
 
             break;
         }
@@ -529,6 +483,7 @@ void Server::run()
             gl_glDisableVertexAttribArray_t *cmd_data =
                 (gl_glDisableVertexAttribArray_t *)data.data();
             glDisableVertexAttribArray(cmd_data->index);
+            append_record(c, data);
 
             break;
         }
@@ -538,6 +493,7 @@ void Server::run()
             std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             GLuint program = glCreateProgram();
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLuint));
@@ -552,6 +508,7 @@ void Server::run()
             gl_glCheckFramebufferStatus_t *cmd_data =
                 (gl_glCheckFramebufferStatus_t *)data.data();
             GLenum status = glCheckFramebufferStatus(cmd_data->target);
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLenum));
@@ -565,6 +522,7 @@ void Server::run()
 
             gl_glAttachShader_t *cmd_data = (gl_glAttachShader_t *)data.data();
             glAttachShader(cmd_data->program, cmd_data->shader);
+            append_record(c, data);
 
             break;
         }
@@ -575,6 +533,7 @@ void Server::run()
 
             gl_glDisable_t *cmd_data = (gl_glDisable_t *)data.data();
             glDisable(cmd_data->cap);
+            append_record(c, data);
 
             break;
         }
@@ -601,6 +560,8 @@ void Server::run()
                              cmd_data->height, cmd_data->depth, cmd_data->border,
                              cmd_data->format, cmd_data->type, NULL);
             }
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGenerateMipmap:
@@ -609,6 +570,7 @@ void Server::run()
 
             gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)data.data();
             glGenerateMipmap(cmd_data->target);
+            append_record(c, data);
 
             break;
         }
@@ -618,6 +580,7 @@ void Server::run()
 
             gl_glFrontFace_t *cmd_data = (gl_glFrontFace_t *)data.data();
             glFrontFace(cmd_data->mode);
+            append_record(c, data);
 
             break;
         }
@@ -627,6 +590,7 @@ void Server::run()
 
             gl_glDepthMask_t *cmd_data = (gl_glDepthMask_t *)data.data();
             glDepthMask(cmd_data->flag);
+            append_record(c, data);
 
             break;
         }
@@ -636,6 +600,7 @@ void Server::run()
 
             gl_glBlendEquation_t *cmd_data = (gl_glBlendEquation_t *)data.data();
             glBlendEquation(cmd_data->mode);
+            append_record(c, data);
 
             break;
         }
@@ -645,6 +610,7 @@ void Server::run()
 
             gl_glEnable_t *cmd_data = (gl_glEnable_t *)data.data();
             glEnable(cmd_data->cap);
+            append_record(c, data);
 
             break;
         }
@@ -654,6 +620,7 @@ void Server::run()
 
             gl_glLinkProgram_t *cmd_data = (gl_glLinkProgram_t *)data.data();
             glLinkProgram(cmd_data->program);
+            append_record(c, data);
 
             break;
         }
@@ -665,6 +632,7 @@ void Server::run()
 
             int result;
             glGetProgramiv(cmd_data->program, cmd_data->pname, &result);
+            append_record(c, data);
 
             if (!result)
             {
@@ -685,6 +653,7 @@ void Server::run()
             std::string data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             GLenum error = glGetError();
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLenum));
@@ -700,6 +669,7 @@ void Server::run()
             glTexStorage2D(cmd_data->target, cmd_data->levels,
                            cmd_data->internalformat, cmd_data->width,
                            cmd_data->height);
+            append_record(c, data);
 
             break;
         }
@@ -709,6 +679,7 @@ void Server::run()
 
             gl_glTexParameteri_t *cmd_data = (gl_glTexParameteri_t *)data.data();
             glTexParameteri(cmd_data->target, cmd_data->pname, cmd_data->param);
+            append_record(c, data);
 
             break;
         }
@@ -719,6 +690,7 @@ void Server::run()
             gl_glGenBuffers_t *cmd_data = (gl_glGenBuffers_t *)data.data();
             GLuint *result = new GLuint[cmd_data->n];
             glGenBuffers(cmd_data->n, result);
+            append_record(c, data);
 
             for (int i = 0; i < cmd_data->n; i++)
             {
@@ -736,6 +708,7 @@ void Server::run()
                 (gl_glGenRenderbuffers_t *)data.data();
             GLuint *result = new GLuint[cmd_data->n];
             glGenRenderbuffers(cmd_data->n, result);
+            append_record(c, data);
 
             for (int i = 0; i < cmd_data->n; i++)
             {
@@ -756,6 +729,7 @@ void Server::run()
                     ->second;
 
             glBindRenderbuffer(cmd_data->target, buffer_id);
+            append_record(c, data);
 
             break;
         }
@@ -768,6 +742,7 @@ void Server::run()
 
             glRenderbufferStorage(cmd_data->target, cmd_data->internalformat,
                                   cmd_data->width, cmd_data->height);
+            append_record(c, data);
 
             break;
         }
@@ -780,6 +755,7 @@ void Server::run()
             glFramebufferRenderbuffer(cmd_data->target, cmd_data->attachment,
                                       cmd_data->renderbuffertarget,
                                       cmd_data->renderbuffer);
+            append_record(c, data);
 
             break;
         }
@@ -806,6 +782,8 @@ void Server::run()
                                 cmd_data->height, cmd_data->depth, cmd_data->format,
                                 cmd_data->type, NULL);
             }
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glBindBuffer:
@@ -817,6 +795,7 @@ void Server::run()
             GLuint buffer_id =
                 (GLuint)glGenBuffers_idx_map.find(cmd_data->id)->second;
             glBindBuffer(cmd_data->target, buffer_id);
+            append_record(c, data);
 
             break;
         }
@@ -830,6 +809,7 @@ void Server::run()
                 (GLuint)glGenFramebuffers_idx_map.find(cmd_data->framebuffer)->second;
 
             glBindFramebuffer(cmd_data->target, buffer_id);
+            append_record(c, data);
 
             break;
         }
@@ -843,6 +823,7 @@ void Server::run()
                 (GLuint)glGenBuffers_idx_map.find(cmd_data->buffer)->second;
 
             glBindBufferBase(cmd_data->target, cmd_data->index, buffer_id);
+            append_record(c, data);
 
             break;
         }
@@ -857,6 +838,7 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteTextures(cmd_data->n, (GLuint *)buffer_data.data());
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -871,6 +853,7 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteFramebuffers(cmd_data->n, (GLuint *)buffer_data.data());
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -881,6 +864,7 @@ void Server::run()
 
             gl_glUniform1f_t *cmd_data = (gl_glUniform1f_t *)data.data();
             glUniform1f(cmd_data->location, cmd_data->v0);
+            append_record(c, data);
 
             break;
         }
@@ -894,6 +878,7 @@ void Server::run()
             glFramebufferTextureLayer(cmd_data->target, cmd_data->attachment,
                                       cmd_data->texture, cmd_data->level,
                                       cmd_data->layer);
+            append_record(c, data);
 
             break;
         }
@@ -908,6 +893,7 @@ void Server::run()
             glRenderbufferStorageMultisample(cmd_data->target, cmd_data->samples,
                                              cmd_data->internalformat,
                                              cmd_data->width, cmd_data->height);
+            append_record(c, data);
 
             break;
         }
@@ -923,6 +909,8 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteRenderbuffers(cmd_data->n, (GLuint *)buffer_data.data());
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glClearBufferfv:
@@ -936,6 +924,8 @@ void Server::run()
 
             glClearBufferfv(cmd_data->buffer, cmd_data->drawbuffer,
                             (GLfloat *)buffer_data.data());
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glDepthFunc:
@@ -945,6 +935,8 @@ void Server::run()
 
             gl_glDepthFunc_t *cmd_data = (gl_glDepthFunc_t *)data.data();
             glDepthFunc(cmd_data->func);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glColorMask:
@@ -955,6 +947,8 @@ void Server::run()
             gl_glColorMask_t *cmd_data = (gl_glColorMask_t *)data.data();
             glColorMask(cmd_data->red, cmd_data->green, cmd_data->blue,
                         cmd_data->alpha);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glClearDepthf:
@@ -964,6 +958,8 @@ void Server::run()
 
             gl_glClearDepthf_t *cmd_data = (gl_glClearDepthf_t *)data.data();
             glClearDepth(cmd_data->d);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glFramebufferTexture2D:
@@ -979,6 +975,7 @@ void Server::run()
             glFramebufferTexture2D(cmd_data->target, cmd_data->attachment,
                                    cmd_data->textarget, texture,
                                    cmd_data->level);
+            append_record(c, data);
 
             break;
         }
@@ -986,9 +983,10 @@ void Server::run()
         {
             std::string data, buffer_data;
             data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
+
             gl_glBufferData_t *cmd_data = (gl_glBufferData_t *)data.data();
-            // more data cache check
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
+
             if (!buffer_data.empty())
             {
                 glBufferData(cmd_data->target, cmd_data->size, buffer_data.data(),
@@ -998,6 +996,7 @@ void Server::run()
             {
                 glBufferData(cmd_data->target, cmd_data->size, NULL, cmd_data->usage);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1020,6 +1019,7 @@ void Server::run()
                 glBufferSubData(cmd_data->target, cmd_data->offset, cmd_data->size,
                                 NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1041,6 +1041,7 @@ void Server::run()
             {
                 glUniform4fv(cmd_data->location, cmd_data->count, NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1051,6 +1052,7 @@ void Server::run()
 
             gl_glUniform1i_t *cmd_data = (gl_glUniform1i_t *)data.data();
             glUniform1i(cmd_data->location, cmd_data->v0);
+            append_record(c, data);
 
             break;
         }
@@ -1063,6 +1065,7 @@ void Server::run()
                 (gl_glUniformBlockBinding_t *)data.data();
             glUniformBlockBinding(cmd_data->program, cmd_data->uniformBlockIndex,
                                   cmd_data->uniformBlockBinding);
+            append_record(c, data);
 
             break;
         }
@@ -1073,6 +1076,7 @@ void Server::run()
 
             gl_glPixelStorei_t *cmd_data = (gl_glPixelStorei_t *)data.data();
             glPixelStorei(cmd_data->pname, cmd_data->param);
+            append_record(c, data);
 
             break;
         }
@@ -1083,6 +1087,7 @@ void Server::run()
 
             gl_glTexParameterf_t *cmd_data = (gl_glTexParameterf_t *)data.data();
             glTexParameterf(cmd_data->target, cmd_data->pname, cmd_data->param);
+            append_record(c, data);
 
             break;
         }
@@ -1103,6 +1108,7 @@ void Server::run()
             {
                 glVertexAttrib4fv(cmd_data->index, NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1114,13 +1120,14 @@ void Server::run()
             gl_glDrawElements_t *cmd_data = (gl_glDrawElements_t *)data.data();
             glDrawElements(cmd_data->mode, cmd_data->count, cmd_data->type,
                            (void *)cmd_data->indices);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glUniform2fv:
         {
             std::string data, buffer_data;
             data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
-
             gl_glUniform2fv_t *cmd_data = (gl_glUniform2fv_t *)data.data();
 
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
@@ -1134,6 +1141,7 @@ void Server::run()
             {
                 glUniform2fv(cmd_data->location, cmd_data->count, NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1156,6 +1164,7 @@ void Server::run()
                 glUniformMatrix4fv(cmd_data->location, cmd_data->count,
                                    cmd_data->transpose, NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1171,10 +1180,10 @@ void Server::run()
 
             for (int i = 0; i < cmd_data->n; i++)
             {
-                // std::cout << result[i] << std::endl;
                 glGenVertexArrays_idx_map.insert(std::make_pair(
                     cmd_data->last_index - cmd_data->n + 1 + i, result[i]));
             }
+            append_record(c, data);
 
             break;
         }
@@ -1188,6 +1197,7 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDrawBuffers(cmd_data->n, (GLenum *)buffer_data.data());
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1202,6 +1212,7 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteVertexArrays(cmd_data->n, (GLuint *)buffer_data.data());
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1215,6 +1226,7 @@ void Server::run()
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
 
             glDeleteBuffers(cmd_data->n, (GLuint *)buffer_data.data());
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1225,6 +1237,7 @@ void Server::run()
 
             gl_glReadBuffer_t *cmd_data = (gl_glReadBuffer_t *)data.data();
             glReadBuffer(cmd_data->src);
+            append_record(c, data);
 
             break;
         }
@@ -1239,6 +1252,7 @@ void Server::run()
                               cmd_data->srcY1, cmd_data->dstX0, cmd_data->dstY0,
                               cmd_data->dstX1, cmd_data->dstY1, cmd_data->mask,
                               cmd_data->filter);
+            append_record(c, data);
 
             break;
         }
@@ -1252,6 +1266,7 @@ void Server::run()
                 (GLuint)glGenVertexArrays_idx_map.find(cmd_data->array)->second;
 
             glBindVertexArray(array);
+            append_record(c, data);
 
             break;
         }
@@ -1267,6 +1282,8 @@ void Server::run()
 
             GLint positionAttr =
                 glGetAttribLocation(cmd_data->programObj, buffer_data.c_str());
+            append_record(c, data, buffer_data);
+
             hasReturn = true;
             ret.rebuild(sizeof(GLint));
             memcpy(ret.data(), &positionAttr, sizeof(GLint));
@@ -1282,6 +1299,7 @@ void Server::run()
                 (gl_glBindAttribLocation_t *)data.data();
 
             buffer_data = recv_data(sock, c->cmd, c->is_more_data_cached, more_data_cache, is_recored);
+            append_record(c, data, buffer_data);
 
             glBindAttribLocation(cmd_data->program, cmd_data->index,
                                  buffer_data.c_str());
@@ -1312,6 +1330,8 @@ void Server::run()
                                        cmd_data->height, cmd_data->border,
                                        cmd_data->imageSize, NULL);
             }
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetUniformLocation:
@@ -1325,6 +1345,7 @@ void Server::run()
 
             GLint location =
                 glGetUniformLocation(cmd_data->program, buffer_data.c_str());
+            append_record(c, data, buffer_data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLint));
@@ -1344,6 +1365,7 @@ void Server::run()
 
             GLint index =
                 glGetUniformBlockIndex(cmd_data->program, buffer_data.c_str());
+            append_record(c, data, buffer_data);
 
             hasReturn = true;
             ret.rebuild(sizeof(GLint));
@@ -1359,6 +1381,7 @@ void Server::run()
             gl_glGetStringi_t *cmd_data = (gl_glGetStringi_t *)data.data();
 
             const GLubyte *strings = glGetStringi(cmd_data->name, cmd_data->index);
+            append_record(c, data);
 
             std::string result;
             result.append(reinterpret_cast<const char *>(strings)); // new style
@@ -1390,6 +1413,8 @@ void Server::run()
                                 cmd_data->yoffset, cmd_data->width, cmd_data->height,
                                 cmd_data->format, cmd_data->type, NULL);
             }
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glGetString:
@@ -1398,6 +1423,7 @@ void Server::run()
 
             gl_glGetString_t *cmd_data = (gl_glGetString_t *)data.data();
             const GLubyte *strings = glGetString(cmd_data->name);
+            append_record(c, data);
 
             std::string result;
             result.append(reinterpret_cast<const char *>(strings)); // new style
@@ -1414,13 +1440,10 @@ void Server::run()
 
             gl_glVertexAttribPointer_t *cmd_data =
                 (gl_glVertexAttribPointer_t *)data.data();
-            // std::cout << cmd_data->index << "\t" << cmd_data->size << "\t" << cmd_data->type << "\t" << cmd_data->normalized << "\t" << cmd_data->stride << "\t" << (void *)cmd_data->pointer << std::endl;
-
-            // std::cout << sequence_number << "\t" << (void *)cmd_data->pointer << std::endl;
-
             glVertexAttribPointer(cmd_data->index, cmd_data->size, cmd_data->type,
                                   cmd_data->normalized, cmd_data->stride,
                                   (void *)cmd_data->pointer); // pointer add 0
+            append_record(c, data);
 
             break;
         }
@@ -1433,6 +1456,7 @@ void Server::run()
                 (gl_glEnableVertexAttribArray_t *)data.data();
 
             glEnableVertexAttribArray(cmd_data->index);
+            append_record(c, data);
 
             break;
         }
@@ -1443,6 +1467,7 @@ void Server::run()
 
             gl_glUseProgram_t *cmd_data = (gl_glUseProgram_t *)data.data();
             glUseProgram(cmd_data->program);
+            append_record(c, data);
 
             break;
         }
@@ -1452,9 +1477,9 @@ void Server::run()
             data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
 
             gl_glActiveTexture_t *cmd_data = (gl_glActiveTexture_t *)data.data();
-            // std::cout << "active: " << cmd_data->texture << std::endl;
 
             glActiveTexture(cmd_data->texture);
+            append_record(c, data);
 
             break;
         }
@@ -1468,6 +1493,7 @@ void Server::run()
                 (GLuint)glGenTextures_idx_map.find(cmd_data->texture)->second;
 
             glBindTexture(cmd_data->target, texture);
+            append_record(c, data);
 
             break;
         }
@@ -1494,6 +1520,8 @@ void Server::run()
                              cmd_data->height, cmd_data->border, cmd_data->format,
                              cmd_data->type, NULL);
             }
+            append_record(c, data, buffer_data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glClearColor:
@@ -1504,6 +1532,7 @@ void Server::run()
             gl_glClearColor_t *cmd_data = (gl_glClearColor_t *)data.data();
             glClearColor(cmd_data->red, cmd_data->green, cmd_data->blue,
                          cmd_data->alpha);
+            append_record(c, data);
 
             break;
         }
@@ -1514,6 +1543,7 @@ void Server::run()
 
             gl_glDrawArrays_t *cmd_data = (gl_glDrawArrays_t *)data.data();
             glDrawArrays(cmd_data->mode, cmd_data->first, cmd_data->count);
+            append_record(c, data);
 
             break;
         }
@@ -1524,6 +1554,7 @@ void Server::run()
 
             gl_glViewport_t *cmd_data = (gl_glViewport_t *)data.data();
             glViewport(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
+            append_record(c, data);
 
             break;
         }
@@ -1534,6 +1565,8 @@ void Server::run()
 
             gl_glScissor_t *cmd_data = (gl_glScissor_t *)data.data();
             glScissor(cmd_data->x, cmd_data->y, cmd_data->width, cmd_data->height);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_BREAK:
@@ -1550,6 +1583,7 @@ void Server::run()
 
             GLint result;
             glGetIntegerv(cmd_data->pname, &result);
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(int));
@@ -1566,6 +1600,7 @@ void Server::run()
 
             GLfloat result;
             glGetFloatv(cmd_data->pname, &result);
+            append_record(c, data);
 
             hasReturn = true;
             ret.rebuild(sizeof(int));
@@ -1582,6 +1617,7 @@ void Server::run()
 
             GLuint *result = new GLuint[cmd_data->n];
             glGenTextures(cmd_data->n, result);
+            append_record(c, data);
 
             for (int i = 0; i < cmd_data->n; i++)
             {
@@ -1599,6 +1635,7 @@ void Server::run()
 
             GLuint *result = new GLuint[cmd_data->n];
             glGenFramebuffers(cmd_data->n, result);
+            append_record(c, data);
 
             for (int i = 0; i < cmd_data->n; i++)
             {
@@ -1614,6 +1651,8 @@ void Server::run()
 
             gl_glUniform1ui_t *cmd_data = (gl_glUniform1ui_t *)data.data();
             glUniform1ui(cmd_data->location, cmd_data->v0);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glBeginTransformFeedback:
@@ -1624,14 +1663,18 @@ void Server::run()
             gl_glBeginTransformFeedback_t *cmd_data =
                 (gl_glBeginTransformFeedback_t *)data.data();
             glBeginTransformFeedback(cmd_data->primitiveMode);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glEndTransformFeedback:
         {
             // recv data
-            zmq::message_t data_msg;
-            auto res = sock.recv(data_msg, zmq::recv_flags::none);
+            std::string data;
+            data = recv_data(sock, c->cmd, c->is_data_cached, data_cache, is_recored);
             glEndTransformFeedback();
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glVertexAttribDivisor:
@@ -1642,6 +1685,8 @@ void Server::run()
             gl_glVertexAttribDivisor_t *cmd_data =
                 (gl_glVertexAttribDivisor_t *)data.data();
             glVertexAttribDivisor(cmd_data->index, cmd_data->divisor);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glDrawArraysInstanced:
@@ -1653,6 +1698,8 @@ void Server::run()
                 (gl_glDrawArraysInstanced_t *)data.data();
             glDrawArraysInstanced(cmd_data->mode, cmd_data->first, cmd_data->count,
                                   cmd_data->instancecount);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glCullFace:
@@ -1662,6 +1709,8 @@ void Server::run()
 
             gl_glCullFace_t *cmd_data = (gl_glCullFace_t *)data.data();
             glCullFace(cmd_data->mode);
+            append_record(c, data);
+
             break;
         }
         case (unsigned char)GL_Server_Command::GLSC_glUniform1iv:
@@ -1682,6 +1731,7 @@ void Server::run()
             {
                 glUniform1iv(cmd_data->location, cmd_data->count, NULL);
             }
+            append_record(c, data, buffer_data);
 
             break;
         }
@@ -1739,6 +1789,8 @@ void Server::run()
             sequence_number = -1;
             recored_count = 0;
             hasReturn = true;
+            prev_record.swap(current_record);
+            std::vector<record_t>().swap(current_record);
             break;
         }
         }

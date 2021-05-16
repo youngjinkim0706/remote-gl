@@ -24,12 +24,19 @@
 #include "gl_commands.h"
 
 #define BUFFER_SIZE 1024
-#define WIDTH 1024
-#define HEIGHT 768
+#define WIDTH 1920
+#define HEIGHT 1080
 #define FIFO_NAME "splab_stream"
 #define TCP_MINIMUM_PACKET_SIZE 20
 #define CACHE_KEY_SIZE sizeof(size_t) * __CHAR_BIT__ + sizeof(unsigned char) * __CHAR_BIT__
 typedef std::string cache_key;
+typedef struct
+{
+    gl_command_t cmd;
+    cache_key data_key;
+    cache_key more_data_key;
+} record_t;
+
 class Server
 {
 public:
@@ -93,5 +100,8 @@ public:
     std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache, bool is_recored);
     std::string alloc_cached_data(zmq::message_t &data_msg);
     cache_key create_cache_key(unsigned char cmd, std::size_t hashed_data);
+    void append_record(gl_command_t *c, std::string data, std::string more_data);
+    void append_record(gl_command_t *c, std::string data);
+
     void init_gl();
 };

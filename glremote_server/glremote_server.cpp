@@ -232,7 +232,7 @@ void Server::run()
         }
         else // cache missed
             c = (gl_command_t *)msg.data();
-
+        // std::cout << sequence_number << "\t" << (int)c->cmd << "\t" << is_recored << std::endl;
         switch (c->cmd)
         {
         case (unsigned char)GL_Server_Command::GLSC_glClear:

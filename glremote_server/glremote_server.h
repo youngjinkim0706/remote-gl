@@ -24,8 +24,8 @@
 #include "gl_commands.h"
 
 #define BUFFER_SIZE 1024
-#define WIDTH 1920
-#define HEIGHT 1080
+#define WIDTH 3840
+#define HEIGHT 2160
 #define FIFO_NAME "splab_stream"
 #define TCP_MINIMUM_PACKET_SIZE 20
 #define CACHE_KEY_SIZE sizeof(size_t) * __CHAR_BIT__ + sizeof(unsigned char) * __CHAR_BIT__

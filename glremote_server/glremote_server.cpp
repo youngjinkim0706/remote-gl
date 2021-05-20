@@ -210,6 +210,15 @@ void Server::run()
     int count = 0;
     sequence_number = 0;
     int recored_count = 0;
+    // pbo init
+    GLuint pboIds[2];
+    glGenBuffers(2, pboIds);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pboIds[0]);
+    glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH * HEIGHT * 4, 0, GL_STREAM_READ);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pboIds[1]);
+    glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH * HEIGHT * 4, 0, GL_STREAM_READ);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
     while (!quit)
     {
         // waiting until data comes here
@@ -752,9 +761,12 @@ void Server::run()
 
             gl_glFramebufferRenderbuffer_t *cmd_data =
                 (gl_glFramebufferRenderbuffer_t *)data.data();
+            GLuint buffer_id =
+                (GLuint)glGenRenderbuffers_idx_map.find(cmd_data->renderbuffer)
+                    ->second;
             glFramebufferRenderbuffer(cmd_data->target, cmd_data->attachment,
                                       cmd_data->renderbuffertarget,
-                                      cmd_data->renderbuffer);
+                                      buffer_id);
             append_record(c, data);
 
             break;
@@ -875,8 +887,10 @@ void Server::run()
 
             gl_glFramebufferTextureLayer_t *cmd_data =
                 (gl_glFramebufferTextureLayer_t *)data.data();
+            GLuint texture =
+                (GLuint)glGenTextures_idx_map.find(cmd_data->texture)->second;
             glFramebufferTextureLayer(cmd_data->target, cmd_data->attachment,
-                                      cmd_data->texture, cmd_data->level,
+                                      texture, cmd_data->level,
                                       cmd_data->layer);
             append_record(c, data);
 
@@ -1063,6 +1077,7 @@ void Server::run()
 
             gl_glUniformBlockBinding_t *cmd_data =
                 (gl_glUniformBlockBinding_t *)data.data();
+
             glUniformBlockBinding(cmd_data->program, cmd_data->uniformBlockIndex,
                                   cmd_data->uniformBlockBinding);
             append_record(c, data);
@@ -1757,34 +1772,54 @@ void Server::run()
             // streaming
             if (enableStreaming)
             {
-                unsigned char *pixel_data =
-                    (unsigned char *)malloc(WIDTH * HEIGHT * 4); // GL_RGBA
+                static int index = 0;
+                int next_index = 0;
+
+                index = (index + 1) % 2;
+                next_index = (index + 1) % 2;
+                // read front buffer
                 glReadBuffer(GL_FRONT);
-                auto start = std::chrono::steady_clock::now();
-                glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
-                             pixel_data);
-                auto end = std::chrono::steady_clock::now();
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, pboIds[index]);
+                glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, pboIds[next_index]);
+                glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+                GLubyte *ptr = (GLubyte *)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+                if (ptr)
+                {
+                    try
+                    {
+                        auto start = std::chrono::steady_clock::now();
+                        mq.get()->send(ptr, WIDTH * HEIGHT * 4, 0);
+                        auto end = std::chrono::steady_clock::now();
+                        // std::cout << "send data to mq: "
+                        //           << std::chrono::duration_cast<std::chrono::microseconds>(
+                        //                  end - start)
+                        //                  .count()
+                        //           << std::endl;
+                    }
+                    catch (boost::interprocess::interprocess_exception &ex)
+                    {
+                        std::cout << ex.what() << std::endl;
+                    }
+                    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                }
+                // auto start = std::chrono::steady_clock::now();
+                // unsigned char *pixel_data =
+                // (unsigned char *)malloc(WIDTH * HEIGHT * 4); // GL_RGBA
+
+                // glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                //  pixel_data);
+                // auto end = std::chrono::steady_clock::now();
+
                 // std::cout << "glReadPixels: "
                 //           << std::chrono::duration_cast<std::chrono::microseconds>(
                 //                  end - start)
                 //                  .count()
                 //           << std::endl;
 
-                try
-                {
-                    auto start = std::chrono::steady_clock::now();
-                    mq.get()->send(pixel_data, WIDTH * HEIGHT * 4, 0);
-                    auto end = std::chrono::steady_clock::now();
-                    // std::cout << "send data to mq: "
-                    //           << std::chrono::duration_cast<std::chrono::microseconds>(
-                    //                  end - start)
-                    //                  .count()
-                    //           << std::endl;
-                }
-                catch (boost::interprocess::interprocess_exception &ex)
-                {
-                    std::cout << ex.what() << std::endl;
-                }
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
             }
             sequence_number = -1;
             recored_count = 0;

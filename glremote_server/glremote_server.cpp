@@ -32,7 +32,7 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
     }
 }
 
-std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::map<cache_key, std::string> &cache, bool is_recored)
+std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::unordered_map<cache_key, std::string> &cache, bool is_recored)
 {
     if (is_recored)
     {
@@ -96,7 +96,7 @@ std::string Server::alloc_cached_data(zmq::message_t &data_msg)
 }
 
 std::string
-Server::insert_or_check_cache(std::map<cache_key, std::string> &cache,
+Server::insert_or_check_cache(std::unordered_map<cache_key, std::string> &cache,
                               unsigned char cmd, zmq::message_t &data_msg)
 {
     bool cached = false;

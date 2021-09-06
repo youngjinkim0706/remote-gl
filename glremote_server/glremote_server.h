@@ -9,7 +9,8 @@
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
-#include <unordered_map>
+// #include <unordered_map>
+#include "lru_cache.hpp"
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
 // #include <GL/glew.h>
@@ -55,9 +56,6 @@ public:
     bool enableStreaming;
     int sequence_number;
 
-    std::unordered_map<cache_key, std::string> data_cache;
-    std::unordered_map<cache_key, std::string> more_data_cache;
-
     std::map<unsigned int, unsigned int> glGenBuffers_idx_map;
     std::map<unsigned int, unsigned int> glGenVertexArrays_idx_map;
     std::map<unsigned int, unsigned int> glGenTextures_idx_map;
@@ -95,9 +93,8 @@ public:
     void server_bind();
     void run();
     // static void run();
-    std::string insert_or_check_cache(std::unordered_map<cache_key, std::string> &cache, unsigned char cmd, zmq::message_t &data_msg);
-    // std::string insert_or_check_cache2(std::map<cache_key, std::string> &cache, cache_key key, zmq::message_t &data_msg);
-    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::unordered_map<cache_key, std::string> &cache, bool is_recored);
+    std::string insert_or_check_cache(lru11::Cache<cache_key, std::string> &cache, unsigned char cmd, zmq::message_t &data_msg);
+    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, lru11::Cache<cache_key, std::string> &cache, bool is_recored);
     std::string alloc_cached_data(zmq::message_t &data_msg);
     cache_key create_cache_key(unsigned char cmd, std::size_t hashed_data);
     void append_record(gl_command_t *c, std::string data, std::string more_data);

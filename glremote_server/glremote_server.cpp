@@ -8,6 +8,10 @@ bool is_compress_enable = true;
 
 std::vector<record_t> prev_record, current_record;
 
+// std::unordered_map<cache_key, std::size_t> data_cache;
+lru11::Cache<cache_key, std::string> data_cache("data", 100000);
+// std::unordered_map<cache_key, std::size_t> more_data_cache;
+lru11::Cache<cache_key, std::string> more_data_cache("more_data", 100000);
 unsigned int total_data_size = 0;
 int cache_hit = 0;
 int sequence_number;
@@ -32,17 +36,19 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
     }
 }
 
-std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, std::unordered_map<cache_key, std::string> &cache, bool is_recored)
+std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, lru11::Cache<cache_key, std::string> &cache, bool is_recored)
 {
     if (is_recored)
     {
         // std::size_t key = std::hash<std::string>{}(current_record[sequence_number]);
         record_t record = prev_record[sequence_number];
 
-        if (cache.begin() == data_cache.begin())
-            return cache.find(record.data_key)->second;
+        if (cache.cache_name == data_cache.cache_name)
+            // return cache.find(record.data_key)->second;
+            return cache.get(record.data_key);
         else
-            return cache.find(record.more_data_key)->second;
+            return cache.get(record.more_data_key);
+        // return cache.find(record.more_data_key)->second;
     }
     else
     {
@@ -57,7 +63,8 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)uncompressed.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
-                return cache.find(key)->second;
+                // return cache.find(key)->second;
+                return cache.get(key);
             }
             msg.rebuild(uncompressed.size());
             memcpy(msg.data(), uncompressed.data(), uncompressed.size());
@@ -68,7 +75,8 @@ std::string Server::recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_
             {
                 gl_glCachedData_t *data = (gl_glCachedData_t *)msg.data();
                 cache_key key = create_cache_key(cmd, data->hash_data);
-                return cache.find(key)->second;
+                // return cache.find(key)->second;
+                return cache.get(key);
             }
         }
 
@@ -96,7 +104,7 @@ std::string Server::alloc_cached_data(zmq::message_t &data_msg)
 }
 
 std::string
-Server::insert_or_check_cache(std::unordered_map<cache_key, std::string> &cache,
+Server::insert_or_check_cache(lru11::Cache<cache_key, std::string> &cache,
                               unsigned char cmd, zmq::message_t &data_msg)
 {
     bool cached = false;
@@ -106,7 +114,8 @@ Server::insert_or_check_cache(std::unordered_map<cache_key, std::string> &cache,
     // {
     std::size_t hashed_data = std::hash<std::string>{}(cache_data);
     cache_key key = create_cache_key(cmd, hashed_data);
-    cache[key] = cache_data;
+    // cache[key] = cache_data;
+    cache.insert(key, cache_data);
     // }
 
     return cache_data;

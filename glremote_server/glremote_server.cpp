@@ -127,6 +127,17 @@ void Server::run()
     unsigned int fccache_hit_count = 0;
     unsigned int ccache_hit_count = 0;
     unsigned int longest_ccache_index = 0;
+    std::cout << "fccache_hit_count"
+              << "/"
+              << "ccache_hit_count"
+              << "/"
+              << "fccache_target"
+              << "/"
+              << "ccache_target"
+              << "/"
+              << "ccache_size"
+              << "/"
+              << "longest_ccache_index" << std::endl;
 #endif
 
     while (!quit)
@@ -1000,19 +1011,22 @@ void Server::run()
         }
         case (unsigned int)GL_Server_Command::GLSC_bufferSwap:
         {
-            glfwSwapBuffers(window);
-            glfwPollEvents();
-
-            hasReturn = true;
             double currentTime = glfwGetTime();
-            lastTime = currentTime;
-
 #if CACHE_EXPERIMENTS
-            std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << current_sequence_number << "/" << current_sequence_number - fccache_hit_count << "/t" << command_cache.size() << "\t" << longest_ccache_index << std::endl;
+            if (currentTime - lastTime >= 1.0)
+            {
+                std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << current_sequence_number << "/" << current_sequence_number - fccache_hit_count << "/" << command_cache.size() << "/" << longest_ccache_index << std::endl;
+                lastTime = currentTime;
+            }
             fccache_hit_count = 0;
             ccache_hit_count = 0;
             longest_ccache_index = 0;
 #endif
+
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+
+            hasReturn = true;
 
 #if SEQUENCE_DEDUP_ENABLE
             prev_frame_hash_list.swap(current_frame_hash_list);

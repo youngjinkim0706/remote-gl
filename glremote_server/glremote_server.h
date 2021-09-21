@@ -16,7 +16,9 @@
 // #include <GL/glew.h>
 #include "glad/glad.h"
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <bitset>
+#include <boost/algorithm/string.hpp>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <boost/scoped_ptr.hpp>
 #include <snappy.h>
@@ -24,25 +26,22 @@
 
 #include "gl_commands.h"
 
-#define BUFFER_SIZE 1024
 #define WIDTH 3840
 #define HEIGHT 2160
 #define FIFO_NAME "splab_stream"
 #define TCP_MINIMUM_PACKET_SIZE 20
+
+#define FRAME_BUFFER_ENABLE 1
+#define SEQUENCE_DEDUP_ENABLE 1
+#define COMMAND_DEDUP_ENABLE 1
+#define ASYNC_BUFFER_BINDING 1
+#define CACHE_EXPERIMENTS 1
+
 #define CACHE_KEY_SIZE sizeof(size_t) * __CHAR_BIT__ + sizeof(unsigned char) * __CHAR_BIT__
-typedef std::string cache_key;
-typedef struct
-{
-    gl_command_t cmd;
-    cache_key data_key;
-    cache_key more_data_key;
-} record_t;
 
 class Server
 {
 public:
-    // static zmq::context_t ctx;
-    // static zmq::socket_t sock;
     zmq::context_t ctx;
     zmq::socket_t sock;
 
@@ -54,7 +53,7 @@ public:
     std::string port;
     std::string streaming_queue_name;
     bool enableStreaming;
-    int sequence_number;
+    int current_sequence_number;
 
     std::map<unsigned int, unsigned int> glGenBuffers_idx_map;
     std::map<unsigned int, unsigned int> glGenVertexArrays_idx_map;
@@ -92,13 +91,5 @@ public:
     }
     void server_bind();
     void run();
-    // static void run();
-    std::string insert_or_check_cache(lru11::Cache<cache_key, std::string> &cache, unsigned char cmd, zmq::message_t &data_msg);
-    std::string recv_data(zmq::socket_t &socket, unsigned char cmd, bool is_cached, lru11::Cache<cache_key, std::string> &cache, bool is_recored);
-    std::string alloc_cached_data(zmq::message_t &data_msg);
-    cache_key create_cache_key(unsigned char cmd, std::size_t hashed_data);
-    void append_record(gl_command_t *c, std::string data, std::string more_data);
-    void append_record(gl_command_t *c, std::string data);
-
     void init_gl();
 };

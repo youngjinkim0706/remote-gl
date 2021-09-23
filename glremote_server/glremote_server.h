@@ -31,12 +31,6 @@
 #define FIFO_NAME "splab_stream"
 #define TCP_MINIMUM_PACKET_SIZE 20
 
-#define FRAME_BUFFER_ENABLE 1
-#define SEQUENCE_DEDUP_ENABLE 1
-#define COMMAND_DEDUP_ENABLE 1
-#define ASYNC_BUFFER_BINDING 1
-#define CACHE_EXPERIMENTS 1
-
 #define CACHE_KEY_SIZE sizeof(size_t) * __CHAR_BIT__ + sizeof(unsigned char) * __CHAR_BIT__
 
 class Server

@@ -1,19 +1,20 @@
 #include "glremote_server.h"
 #include <vector>
-
+  
 #define FRAME_BUFFER_ENABLE 1
 #define SEQUENCE_DEDUP_ENABLE 1
 #define COMMAND_DEDUP_ENABLE 1
 #define ASYNC_BUFFER_BINDING 1
 #define CACHE_EXPERIMENTS 1
+#define CACHE_ENTRY_SIZE MAX_CACHE_ENTRY // change this
 
 int Server::framebufferHeight = 0;
 int Server::framebufferWidth = 0;
-int shader_compiled = 0;
+int shader_compiled = 0; 
 
 std::vector<std::string> current_frame_hash_list;
 std::vector<std::string> prev_frame_hash_list;
-lru11::Cache<std::string, std::string> command_cache("ccache", MAX_CACHE_ENTRY, 0);
+lru11::Cache<std::string, std::string> command_cache("ccache", CACHE_ENTRY_SIZE, 0);
 
 static void errorCallback(int errorCode, const char *errorDescription)
 
@@ -68,10 +69,13 @@ void update_frame_hash_list(std::string message)
 {
     current_frame_hash_list.push_back(message);
 }
-void update_command_cache(std::string message, bool is_hit)
+void update_command_cache(std::string message, bool ccache_hit, bool fccache_hit)
 {
-    if (!is_hit)
-        command_cache.insert(message, message);
+    if (!ccache_hit)
+    {
+        if (!fccache_hit)
+            command_cache.insert(message, message);
+    }
     else
         command_cache.update(message);
 }
@@ -124,6 +128,7 @@ void Server::run()
     OpenGLCmd *c;
     current_sequence_number = 0;
 #if CACHE_EXPERIMENTS
+    unsigned int command_count_for_sec = 0;
     unsigned int fccache_hit_count = 0;
     unsigned int ccache_hit_count = 0;
     unsigned int longest_ccache_index = 0;
@@ -180,7 +185,7 @@ void Server::run()
 #endif
 
 #if COMMAND_DEDUP_ENABLE
-        update_command_cache(message, ccache_hit);
+        update_command_cache(message, ccache_hit, fccache_hit);
 #endif
         switch (c->cmd)
         {
@@ -746,29 +751,46 @@ void Server::run()
             glColorMask(cmd_data->red, cmd_data->green, cmd_data->blue, cmd_data->alpha);
             break;
         }
-        case (unsigned int)GL_Server_Command::GLSC_glDeleteTextures:
-        {
-            gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)((char *)message.data() + CMD_FIELD_SIZE);
-            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t)));
-            glDeleteTextures(cmd_data->n, (GLuint *)pointer_param.data());
+        // case (unsigned int)GL_Server_Command::GLSC_glDeleteTextures:
+        // {
+        //     gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)((char *)message.data() + CMD_FIELD_SIZE);
+        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t)));
+        //     glDeleteTextures(cmd_data->n, (GLuint *)pointer_param.data());
 
-            break;
-        }
-        case (unsigned int)GL_Server_Command::GLSC_glDeleteFramebuffers:
-        {
+        //     break;
+        // }
+        // case (unsigned char)GL_Server_Command::GLSC_glDeleteVertexArrays:
+        // {
+        //     gl_glDeleteVertexArrays_t *cmd_data = (gl_glDeleteVertexArrays_t *)((char *)message.data() + CMD_FIELD_SIZE);
+        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t)));
 
-            gl_glDeleteFramebuffers_t *cmd_data = (gl_glDeleteFramebuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
-            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t)));
-            glDeleteFramebuffers(cmd_data->n, (GLuint *)pointer_param.data());
-            break;
-        }
-        case (unsigned int)GL_Server_Command::GLSC_glDeleteRenderbuffers:
-        {
-            gl_glDeleteRenderbuffers_t *cmd_data = (gl_glDeleteRenderbuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
-            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t)));
-            glDeleteRenderbuffers(cmd_data->n, (GLuint *)pointer_param.data());
-            break;
-        }
+        //     glDeleteVertexArrays(cmd_data->n, (GLuint *)pointer_param.data());
+
+        //     break;
+        // }
+        // case (unsigned char)GL_Server_Command::GLSC_glDeleteBuffers:
+        // {
+        //     gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t)));
+        //     glDeleteBuffers(cmd_data->n, (GLuint *)pointer_param.data());
+
+        //     break;
+        // }
+        // case (unsigned int)GL_Server_Command::GLSC_glDeleteFramebuffers:
+        // {
+
+        //     gl_glDeleteFramebuffers_t *cmd_data = (gl_glDeleteFramebuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t)));
+        //     glDeleteFramebuffers(cmd_data->n, (GLuint *)pointer_param.data());
+        //     break;
+        // }
+        // case (unsigned int)GL_Server_Command::GLSC_glDeleteRenderbuffers:
+        // {
+        //     gl_glDeleteRenderbuffers_t *cmd_data = (gl_glDeleteRenderbuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t)));
+        //     glDeleteRenderbuffers(cmd_data->n, (GLuint *)pointer_param.data());
+        //     break;
+        // }
         case (unsigned int)GL_Server_Command::GLSC_glGenerateMipmap:
         {
             gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)((char *)message.data() + CMD_FIELD_SIZE);
@@ -1009,18 +1031,35 @@ void Server::run()
             glVertexAttribDivisor(cmd_data->index, cmd_data->divisor);
             break;
         }
+        case (unsigned char)GL_Server_Command::GLSC_glRenderbufferStorageMultisample:
+        {
+            gl_glRenderbufferStorageMultisample_t *cmd_data = (gl_glRenderbufferStorageMultisample_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            glRenderbufferStorageMultisample(cmd_data->target, cmd_data->samples,
+                                             cmd_data->internalformat,
+                                             cmd_data->width, cmd_data->height);
+            break;
+        }
+        case (unsigned char)GL_Server_Command::GLSC_glDrawArraysInstanced:
+        {
+            gl_glDrawArraysInstanced_t *cmd_data = (gl_glDrawArraysInstanced_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            glDrawArraysInstanced(cmd_data->mode, cmd_data->first, cmd_data->count,
+                                  cmd_data->instancecount);
+            break;
+        }
         case (unsigned int)GL_Server_Command::GLSC_bufferSwap:
         {
             double currentTime = glfwGetTime();
 #if CACHE_EXPERIMENTS
             if (currentTime - lastTime >= 1.0)
             {
-                std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << current_sequence_number << "/" << current_sequence_number - fccache_hit_count << "/" << command_cache.size() << "/" << longest_ccache_index << std::endl;
+                std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << command_count_for_sec << "/" << command_count_for_sec - fccache_hit_count << "/" << command_cache.size() << "/" << longest_ccache_index << std::endl;
                 lastTime = currentTime;
+                fccache_hit_count = 0;
+                ccache_hit_count = 0;
+                longest_ccache_index = 0;
+                command_count_for_sec = -1;
             }
-            fccache_hit_count = 0;
-            ccache_hit_count = 0;
-            longest_ccache_index = 0;
+
 #endif
 
             glfwSwapBuffers(window);
@@ -1044,6 +1083,9 @@ void Server::run()
 
         if (hasReturn)
             sock.send(ret, zmq::send_flags::none);
+#if CACHE_EXPERIMENTS
+        command_count_for_sec++;
+#endif
         current_sequence_number++;
     }
 }

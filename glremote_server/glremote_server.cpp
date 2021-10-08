@@ -1,17 +1,20 @@
 #include "glremote_server.h"
 #include <vector>
-  
+
 #define FRAME_BUFFER_ENABLE 1
 #define SEQUENCE_DEDUP_ENABLE 1
 #define COMMAND_DEDUP_ENABLE 1
 #define ASYNC_BUFFER_BINDING 1
-#define CACHE_EXPERIMENTS 1
-#define CACHE_ENTRY_SIZE MAX_CACHE_ENTRY // change this
+#define CACHE_EXPERIMENTS 0
+#define LATENCY_EXPERIMENTS 0
+#define CACHE_ENTRY_SIZE 1000 // change this
 
 int Server::framebufferHeight = 0;
 int Server::framebufferWidth = 0;
-int shader_compiled = 0; 
+int shader_compiled = 0;
+size_t fc_cache_size = 0;
 
+int frame_number = 0;
 std::vector<std::string> current_frame_hash_list;
 std::vector<std::string> prev_frame_hash_list;
 lru11::Cache<std::string, std::string> command_cache("ccache", CACHE_ENTRY_SIZE, 0);
@@ -67,6 +70,7 @@ static void framebufferSizeCallback(GLFWwindow *window, int width, int height)
 
 void update_frame_hash_list(std::string message)
 {
+    fc_cache_size += message.size();
     current_frame_hash_list.push_back(message);
 }
 void update_command_cache(std::string message, bool ccache_hit, bool fccache_hit)
@@ -117,7 +121,7 @@ void Server::init_gl()
     glEnable(GL_DEBUG_OUTPUT);
     glDebugMessageCallback(MessageCallback, 0);
 
-    // glfwSwapInterval(0);
+    glfwSwapInterval(1);
 }
 
 void Server::run()
@@ -127,6 +131,7 @@ void Server::run()
     double lastTime = glfwGetTime();
     OpenGLCmd *c;
     current_sequence_number = 0;
+    int numOfFrames = 0;
 #if CACHE_EXPERIMENTS
     unsigned int command_count_for_sec = 0;
     unsigned int fccache_hit_count = 0;
@@ -142,7 +147,8 @@ void Server::run()
               << "/"
               << "ccache_size"
               << "/"
-              << "longest_ccache_index" << std::endl;
+              << "longest_ccache_index"
+              << "fc_cache_size " << std::endl;
 #endif
 
     while (!quit)
@@ -153,8 +159,18 @@ void Server::run()
         bool hasReturn = false;
         bool ccache_hit = false;
         bool fccache_hit = false;
-        auto res = sock.recv(msg, zmq::recv_flags::none); //entry point
+        auto res = sock.recv(msg, zmq::recv_flags::none);
+//entry point
+// 받았을 때 시간 출력
+#if LATENCY_EXPERIMENTS
+        if (current_sequence_number == 0)
+        {
+            auto current_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            std::cout << "LATENCY_RECEIVE:" << current_time << "\tframe_nubmer:" << frame_number << std::endl;
+        }
+#endif
         std::string message = msg.to_string();
+
 #if SEQUENCE_DEDUP_ENABLE
         if (message.empty())
         {
@@ -166,6 +182,13 @@ void Server::run()
         }
 #endif
         c = (OpenGLCmd *)message.data();
+#if LATENCY_EXPERIMENTS
+        if (c->cmd == (unsigned int)GL_Server_Command::GLSC_bufferSwap)
+        {
+            auto bufferswap_arrival_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            std::cout << "LATENCY_LAST_COMMAND_ARRIVAL:" << bufferswap_arrival_time << "\tframe_nubmer:" << frame_number << std::endl;
+        }
+#endif
 #if COMMAND_DEDUP_ENABLE
         if (c->deduplication == 3)
         {
@@ -712,10 +735,22 @@ void Server::run()
             gl_glTexSubImage3D_t *cmd_data = (gl_glTexSubImage3D_t *)((char *)message.data() + CMD_FIELD_SIZE);
             std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glTexSubImage3D_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glTexSubImage3D_t)));
 
-            glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
-                            cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
-                            cmd_data->height, cmd_data->depth, cmd_data->format,
-                            cmd_data->type, pointer_param.data());
+            if (!pointer_param.empty())
+            {
+                glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                                cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
+                                cmd_data->height, cmd_data->depth, cmd_data->format,
+                                cmd_data->type, pointer_param.data());
+            }
+            else
+            {
+                glTexSubImage3D(cmd_data->target, cmd_data->level, cmd_data->xoffset,
+                                cmd_data->yoffset, cmd_data->zoffset, cmd_data->width,
+                                cmd_data->height, cmd_data->depth, cmd_data->format,
+                                cmd_data->type, pointer_param.data());
+            }
+            std::cout << c->cmd << "\t" << cmd_data->target << "\t" << cmd_data->level << "\t" << cmd_data->xoffset << "\t" << cmd_data->yoffset << "\t" << cmd_data->zoffset << "\t" << cmd_data->width << "\t" << cmd_data->height << "\t" << cmd_data->depth << "\t" << cmd_data->format << "\t" << cmd_data->type << std::endl;
+
             break;
         }
         case (unsigned int)GL_Server_Command::GLSC_glFramebufferTexture2D:
@@ -751,46 +786,101 @@ void Server::run()
             glColorMask(cmd_data->red, cmd_data->green, cmd_data->blue, cmd_data->alpha);
             break;
         }
-        // case (unsigned int)GL_Server_Command::GLSC_glDeleteTextures:
-        // {
-        //     gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)((char *)message.data() + CMD_FIELD_SIZE);
-        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t)));
-        //     glDeleteTextures(cmd_data->n, (GLuint *)pointer_param.data());
+        case (unsigned int)GL_Server_Command::GLSC_glDeleteTextures:
+        {
+            gl_glDeleteTextures_t *cmd_data = (gl_glDeleteTextures_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteTextures_t)));
+#if ASYNC_BUFFER_BINDING
+            GLuint *tmp = new GLuint[pointer_param.size()];
+            GLuint *textures = new GLuint[pointer_param.size()];
 
-        //     break;
-        // }
-        // case (unsigned char)GL_Server_Command::GLSC_glDeleteVertexArrays:
-        // {
-        //     gl_glDeleteVertexArrays_t *cmd_data = (gl_glDeleteVertexArrays_t *)((char *)message.data() + CMD_FIELD_SIZE);
-        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t)));
+            memcpy((void *)tmp, pointer_param.data(), pointer_param.size());
+            for (int i = 0; i < pointer_param.size(); i++)
+                textures[i] = (GLuint)glGenTextures_idx_map.find(tmp[i])->second;
+            glDeleteTextures(cmd_data->n, textures);
 
-        //     glDeleteVertexArrays(cmd_data->n, (GLuint *)pointer_param.data());
+#else
+            glDeleteTextures(cmd_data->n, (GLuint *)pointer_param.data());
+#endif
 
-        //     break;
-        // }
-        // case (unsigned char)GL_Server_Command::GLSC_glDeleteBuffers:
-        // {
-        //     gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
-        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t)));
-        //     glDeleteBuffers(cmd_data->n, (GLuint *)pointer_param.data());
+            break;
+        }
+        case (unsigned char)GL_Server_Command::GLSC_glDeleteVertexArrays:
+        {
+            gl_glDeleteVertexArrays_t *cmd_data = (gl_glDeleteVertexArrays_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteVertexArrays_t)));
+#if ASYNC_BUFFER_BINDING
+            GLuint *tmp = new GLuint[pointer_param.size()];
+            GLuint *arrays = new GLuint[pointer_param.size()];
 
-        //     break;
-        // }
-        // case (unsigned int)GL_Server_Command::GLSC_glDeleteFramebuffers:
-        // {
+            memcpy((void *)tmp, pointer_param.data(), pointer_param.size());
+            for (int i = 0; i < pointer_param.size(); i++)
+                arrays[i] = (GLuint)glGenVertexArrays_idx_map.find(tmp[i])->second;
+            glDeleteVertexArrays(cmd_data->n, arrays);
 
-        //     gl_glDeleteFramebuffers_t *cmd_data = (gl_glDeleteFramebuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
-        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t)));
-        //     glDeleteFramebuffers(cmd_data->n, (GLuint *)pointer_param.data());
-        //     break;
-        // }
-        // case (unsigned int)GL_Server_Command::GLSC_glDeleteRenderbuffers:
-        // {
-        //     gl_glDeleteRenderbuffers_t *cmd_data = (gl_glDeleteRenderbuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
-        //     std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t)));
-        //     glDeleteRenderbuffers(cmd_data->n, (GLuint *)pointer_param.data());
-        //     break;
-        // }
+#else
+            glDeleteVertexArrays(cmd_data->n, (GLuint *)pointer_param.data());
+#endif
+
+            break;
+        }
+        case (unsigned char)GL_Server_Command::GLSC_glDeleteBuffers:
+        {
+            gl_glDeleteBuffers_t *cmd_data = (gl_glDeleteBuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteBuffers_t)));
+#if ASYNC_BUFFER_BINDING
+            GLuint *tmp = new GLuint[pointer_param.size()];
+            GLuint *buffers = new GLuint[pointer_param.size()];
+
+            memcpy((void *)tmp, pointer_param.data(), pointer_param.size());
+            for (int i = 0; i < pointer_param.size(); i++)
+                buffers[i] = (GLuint)glGenBuffers_idx_map.find(tmp[i])->second;
+            glDeleteBuffers(cmd_data->n, buffers);
+
+#else
+            glDeleteBuffers(cmd_data->n, (GLuint *)pointer_param.data());
+#endif
+
+            break;
+        }
+        case (unsigned int)GL_Server_Command::GLSC_glDeleteFramebuffers:
+        {
+
+            gl_glDeleteFramebuffers_t *cmd_data = (gl_glDeleteFramebuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteFramebuffers_t)));
+#if ASYNC_BUFFER_BINDING
+            GLuint *tmp = new GLuint[pointer_param.size()];
+            GLuint *buffers = new GLuint[pointer_param.size()];
+
+            memcpy((void *)tmp, pointer_param.data(), pointer_param.size());
+            for (int i = 0; i < pointer_param.size(); i++)
+                buffers[i] = (GLuint)glGenFramebuffers_idx_map.find(tmp[i])->second;
+            glDeleteFramebuffers(cmd_data->n, buffers);
+
+#else
+            glDeleteFramebuffers(cmd_data->n, (GLuint *)pointer_param.data());
+#endif
+
+            break;
+        }
+        case (unsigned int)GL_Server_Command::GLSC_glDeleteRenderbuffers:
+        {
+            gl_glDeleteRenderbuffers_t *cmd_data = (gl_glDeleteRenderbuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
+            std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDeleteRenderbuffers_t)));
+#if ASYNC_BUFFER_BINDING
+            GLuint *tmp = new GLuint[pointer_param.size()];
+            GLuint *buffers = new GLuint[pointer_param.size()];
+
+            memcpy((void *)tmp, pointer_param.data(), pointer_param.size());
+            for (int i = 0; i < pointer_param.size(); i++)
+                buffers[i] = (GLuint)glGenRenderbuffers_idx_map.find(tmp[i])->second;
+            glDeleteRenderbuffers(cmd_data->n, buffers);
+
+#else
+            glDeleteRenderbuffers(cmd_data->n, (GLuint *)pointer_param.data());
+#endif
+            break;
+        }
         case (unsigned int)GL_Server_Command::GLSC_glGenerateMipmap:
         {
             gl_glGenerateMipmap_t *cmd_data = (gl_glGenerateMipmap_t *)((char *)message.data() + CMD_FIELD_SIZE);
@@ -1009,8 +1099,11 @@ void Server::run()
         {
             gl_glDrawBuffers_t *cmd_data = (gl_glDrawBuffers_t *)((char *)message.data() + CMD_FIELD_SIZE);
             std::string pointer_param = message.substr(CMD_FIELD_SIZE + sizeof(gl_glDrawBuffers_t), message.size() - (CMD_FIELD_SIZE + sizeof(gl_glDrawBuffers_t)));
+            if (!pointer_param.empty())
+                glDrawBuffers(cmd_data->n, (GLenum *)pointer_param.data());
+            else
+                glDrawBuffers(cmd_data->n, NULL);
 
-            glDrawBuffers(cmd_data->n, (GLenum *)pointer_param.data());
             break;
         }
         case (unsigned int)GL_Server_Command::GLSC_glDepthFunc:
@@ -1049,22 +1142,33 @@ void Server::run()
         case (unsigned int)GL_Server_Command::GLSC_bufferSwap:
         {
             double currentTime = glfwGetTime();
+            numOfFrames++;
+            if (currentTime - lastTime >= 1.0)
+            {
+                std::cout << "fps:" << numOfFrames << std::endl;
+                numOfFrames = 0;
+                lastTime = currentTime;
+            }
 #if CACHE_EXPERIMENTS
             if (currentTime - lastTime >= 1.0)
             {
-                std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << command_count_for_sec << "/" << command_count_for_sec - fccache_hit_count << "/" << command_cache.size() << "/" << longest_ccache_index << std::endl;
+
+                std::cout << fccache_hit_count << "/" << ccache_hit_count << "/" << command_count_for_sec << "/" << command_count_for_sec - fccache_hit_count << "/" << command_cache.size() << "/" << longest_ccache_index << "/" << command_cache.cache_size() << std::endl;
                 lastTime = currentTime;
                 fccache_hit_count = 0;
                 ccache_hit_count = 0;
                 longest_ccache_index = 0;
                 command_count_for_sec = -1;
             }
+            // std::cout << "FC_CACHE_SIZE:" << fc_cache_size << std::endl;
 
 #endif
-
             glfwSwapBuffers(window);
             glfwPollEvents();
-
+#if LATENCY_EXPERIMENTS
+            auto current_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            std::cout << "LATENCY_RENDERING_END:" << current_time << "\tframe_number:" << frame_number << std::endl;
+#endif
             hasReturn = true;
 
 #if SEQUENCE_DEDUP_ENABLE
@@ -1072,11 +1176,13 @@ void Server::run()
             std::vector<std::string>().swap(current_frame_hash_list);
 #endif
             current_sequence_number = -1; // switch 이후에 ++연산을 하기때문에 -1로 초기화 함
+            frame_number++;
+            fc_cache_size = 0;
             break;
         }
         default:
         {
-            std::cout << c->cmd << std::endl;
+            //std::cout << c->cmd << std::endl;
             break;
         }
         }

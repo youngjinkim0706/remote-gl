@@ -114,6 +114,11 @@ public:
     {
         cache_name = name;
         cache_.reserve(MAX_BUCKET_SIZE);
+        data_size_ = 0;
+    }
+    size_t cache_size()
+    {
+        return data_size_;
     }
     virtual ~Cache() = default;
     size_t size() const
@@ -146,9 +151,10 @@ public:
             keys_.splice(keys_.begin(), keys_, iter->second);
             return false;
         }
-
+        data_size_ += v.size();
         keys_.emplace_front(k, std::move(v));
         cache_[k] = keys_.begin();
+
         prune();
         return true;
     }
@@ -282,6 +288,8 @@ protected:
         while (cache_.size() > maxSize_)
         {
             // std::cout << keys_.back().key << std::endl;
+            const auto iter = cache_.find(keys_.back().key);
+            data_size_ -= iter->second->value.size();
             cache_.erase(keys_.back().key);
             keys_.pop_back();
             ++count;
@@ -299,6 +307,7 @@ private:
     list_type keys_;
     size_t maxSize_;
     size_t elasticity_;
+    size_t data_size_;
 };
 
 } // namespace lru11

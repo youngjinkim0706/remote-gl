@@ -13,3 +13,4 @@ hit_ratio
 gl_server.*
 *.txt
 *.trace
+*.gz

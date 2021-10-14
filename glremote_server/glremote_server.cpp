@@ -1,10 +1,10 @@
 #include "glremote_server.h"
 #include <vector>
 
-#define FRAME_BUFFER_ENABLE 1
-#define SEQUENCE_DEDUP_ENABLE 1
-#define COMMAND_DEDUP_ENABLE 1
-#define ASYNC_BUFFER_BINDING 1
+#define FRAME_BUFFER_ENABLE 0
+#define SEQUENCE_DEDUP_ENABLE 0
+#define COMMAND_DEDUP_ENABLE 0
+#define ASYNC_BUFFER_BINDING 0
 #define CACHE_EXPERIMENTS 0
 #define LATENCY_EXPERIMENTS 0
 #define CACHE_ENTRY_SIZE 1000 // change this
@@ -150,12 +150,12 @@ void Server::run()
               << "longest_ccache_index"
               << "fc_cache_size " << std::endl;
 #endif
-
+    zmq::message_t msg;
+    zmq::message_t ret;
     while (!quit)
     {
         // waiting until data comes here
-        zmq::message_t msg;
-        zmq::message_t ret;
+
         bool hasReturn = false;
         bool ccache_hit = false;
         bool fccache_hit = false;
@@ -1145,7 +1145,7 @@ void Server::run()
             numOfFrames++;
             if (currentTime - lastTime >= 1.0)
             {
-                std::cout << "fps:" << numOfFrames << std::endl;
+                std::cout << "fps:" << numOfFrames << "\t" << (glGenBuffers_idx_map.size() + glGenVertexArrays_idx_map.size() + glGenTextures_idx_map.size() + glGenFramebuffers_idx_map.size() + glGenRenderbuffers_idx_map.size()) * 2 * sizeof(unsigned int) << std::endl;
                 numOfFrames = 0;
                 lastTime = currentTime;
             }

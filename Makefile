@@ -1,7 +1,7 @@
 CXX=g++
 CXXFLAGS=-std=c++11 -Wno-deprecated-declarations
 
-LIBS=-L/usr/lib/ -L./ -lzmq -lglad `pkg-config --libs glfw3` -lsnappy -lpthread -lrt 
+LIBS=-L/usr/lib/ -L./ -lzmq -lglad `pkg-config --libs glfw3` -lpthread -lrt 
 STREAMER_LIBS=-L/usr/lib/ -lzmq `pkg-config --libs gstreamer-1.0` `pkg-config --libs gstreamer-app-1.0` `pkg-config --libs gstreamer-rtsp-server-1.0` -lpthread -lrt -ldl -lboost
 STREAMER_INCLUDES=-I/usr/include/ -I/usr/include/gstreamer-1.0 -I/usr/include/glib-2.0/ -I/usr/lib/x86_64-linux-gnu/glib-2.0/include/
 
